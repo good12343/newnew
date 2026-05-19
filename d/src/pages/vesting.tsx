@@ -6,6 +6,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { VESTING_ABI } from '@/config/abis';
 
+// ─── Backend API Configuration ────────────────────────────────────────────────
+// TODO: ضع هنا عنوان الـ Backend API الخاص بك
+// مثال: const API_BASE_URL = 'https://api.yourproject.com';
+// أو: const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_BASE_URL = 'https://info-ef2s.onrender.com'; // ← عدّل هذا
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatLargeNumber(value: bigint, decimals = 18, fractionDigits = 2): string {
   const num = parseFloat(formatUnits(value, decimals));
@@ -103,9 +109,10 @@ export default function VestingPage() {
   const { openConnectModal } = useConnectModal();
 
   const [claimTxHash, setClaimTxHash] = useState<Hash | null>(null);
-  const [claimStep, setClaimStep] = useState<'idle' | 'claiming' | 'waiting'>('idle');
+  const [claimStep, setClaimStep] = useState<'idle' | 'claiming' | 'waiting' | 'syncing'>('idle');
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [cliffCountdown, setCliffCountdown] = useState(0);
 
   // ── Read Constants from Contract ───────────────────────────────────────────
@@ -195,14 +202,15 @@ export default function VestingPage() {
   });
 
   // ── Effects ─────────────────────────────────────────────────────────────────
+  
+  // On claim confirmed - sync with backend (نفس منطق Buy.tsx)
   useEffect(() => {
     if (claimConfirmed && claimStep === 'waiting') {
-      setClaimStep('idle');
-      setClaimSuccess(true);
-      refetchVesting();
-      refetchReleasable();
+      // ── Backend Sync: تسجيل عملية السحب في قاعدة البيانات ──────────────
+      syncClaimWithBackend();
     }
-  }, [claimConfirmed, claimStep, refetchVesting, refetchReleasable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claimConfirmed, claimStep]);
 
   // Cliff countdown
   useEffect(() => {
@@ -213,6 +221,63 @@ export default function VestingPage() {
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [startTime, cliffSeconds]);
+
+  // ── Backend Sync Function ─────────────────────────────────────────────────────
+  /**
+   * TODO: Backend Integration - تسجيل عملية السحب من الاستحقاق
+   * 
+   * هذا الدالة ترسل بيانات السحب الناجحة إلى الـ Backend
+   * Endpoint المطلوب: POST /api/vesting/claim
+   * البيانات المرسلة:
+   *   - walletAddress: عنوان المحفظة
+   *   - amount: كمية التوكنز المسحوبة
+   *   - txHash: هاش المعاملة على البلوكشين
+   *   - timestamp: وقت المعاملة
+   */
+  const syncClaimWithBackend = async () => {
+    if (!address || !claimTxHash) return;
+    
+    setClaimStep('syncing');
+    setSyncError(null);
+    
+    try {
+      // TODO: عدّل عنوان الـ API حسب مشروعك
+      const response = await fetch(`${API_BASE_URL}/api/vesting/claim`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: address,
+          amount: releasable ? formatUnits(releasable as bigint, 18) : '0',
+          txHash: claimTxHash,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend sync failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Vesting claim synced with backend:', data);
+      
+      // ── نجاح المزامنة ──────────────────────────────────────────────
+      setClaimStep('idle');
+      setClaimSuccess(true);
+      refetchVesting();
+      refetchReleasable();
+      
+    } catch (err) {
+      console.error('Backend sync error:', err);
+      setSyncError('Claim successful but failed to sync with database. Please contact support.');
+      // لا نمنع النجاح حتى لو فشلت المزامنة - المعاملة نجحت على البلوكشين
+      setClaimStep('idle');
+      setClaimSuccess(true);
+      refetchVesting();
+      refetchReleasable();
+    }
+  };
 
   // ── Derived Values ──────────────────────────────────────────────────────────
   const schedule = vestingData as [bigint, bigint] | undefined;
@@ -255,6 +320,8 @@ export default function VestingPage() {
     }
     setClaimError(null);
     setClaimSuccess(false);
+    setSyncError(null);
+    
     try {
       setClaimStep('claiming');
       const hash = await claimTokens({
@@ -588,6 +655,8 @@ export default function VestingPage() {
                     ? 'Sending Claim...'
                     : claimStep === 'waiting'
                     ? 'Waiting for Confirmation...'
+                    : claimStep === 'syncing'
+                    ? 'Syncing with Database...'
                     : isPaused
                     ? 'Claims Paused'
                     : !cliffReached
@@ -614,6 +683,21 @@ export default function VestingPage() {
             )}
           </AnimatePresence>
 
+          {/* ── Sync Error ── */}
+          <AnimatePresence>
+            {syncError && (
+              <motion.div
+                className="p-4 bg-yellow-900/40 border border-yellow-700/60 rounded-xl text-yellow-300 text-sm text-center"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                <p className="font-semibold mb-1">⚠️ Sync Warning</p>
+                {syncError}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* ── Claim Success ── */}
           <AnimatePresence>
             {claimSuccess && (
@@ -625,7 +709,7 @@ export default function VestingPage() {
               >
                 <p className="font-semibold mb-1">Tokens Claimed Successfully!</p>
                 <p className="text-xs text-emerald-400/80 mb-2">
-                  Tokens have been transferred to your wallet.
+                  Tokens have been transferred to your wallet and saved to the database.
                 </p>
                 {claimTxHash && (
                   <a

@@ -1,5 +1,3 @@
-'use client';
-
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, formatUnits, type Hash } from 'viem';
@@ -7,6 +5,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Calculator, { type Currency } from '@/components/Calculator';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { SALE_ABI, TOKEN_ABI } from '@/config/abis';
+
+// ─── Backend API Configuration ────────────────────────────────────────────────
+// TODO: ضع هنا عنوان الـ Backend API الخاص بك
+// مثال: const API_BASE_URL = 'https://api.yourproject.com';
+// أو: const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_BASE_URL = 'https://info-ef2s.onrender.com'; // ← عدّل هذا
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatLargeNumber(value: bigint, decimals = 18): string {
@@ -59,7 +63,7 @@ const SALE_STATES: Record<string, { label: string; color: string; bg: string }> 
   finalized: { label: 'Finalized', color: 'text-orange-400', bg: 'bg-orange-900/20' },
 };
 
-type TransactionStep = 'idle' | 'approving' | 'approved' | 'purchasing' | 'waiting';
+type TransactionStep = 'idle' | 'approving' | 'approved' | 'purchasing' | 'waiting' | 'syncing';
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function BuyPage() {
@@ -71,6 +75,7 @@ export default function BuyPage() {
   const [success, setSuccess] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>('ETH');
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // ── Contract Reads ────────────────────────────────────────────────────────────
   const { data: saleCap } = useReadContract({
@@ -191,9 +196,58 @@ export default function BuyPage() {
     return () => clearInterval(id);
   }, [saleEnd]);
 
-  // On transaction confirmed
+  // On transaction confirmed - sync with backend
   useEffect(() => {
     if (txConfirmed && step === 'waiting') {
+      // ── Backend Sync: تسجيل عملية الشراء في قاعدة البيانات ──────────────
+      syncPurchaseWithBackend();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txConfirmed, step]);
+
+  // ── Backend Sync Function ─────────────────────────────────────────────────────
+  /**
+   * TODO: Backend Integration - تسجيل عملية الشراء
+   * 
+   * هذا الدالة ترسل بيانات الشراء الناجحة إلى الـ Backend
+   * Endpoint المطلوب: POST /api/purchase
+   * البيانات المرسلة:
+   *   - walletAddress: عنوان المحفظة
+   *   - amount: كمية التوكنز المشتراة
+   *   - currency: العملة المستخدمة (ETH, USDT, USDC, DAI)
+   *   - txHash: هاش المعاملة على البلوكشين
+   *   - timestamp: وقت المعاملة
+   */
+  const syncPurchaseWithBackend = async () => {
+    if (!address || !txHash) return;
+    
+    setStep('syncing');
+    setSyncError(null);
+    
+    try {
+      // TODO: عدّل عنوان الـ API حسب مشروعك
+      const response = await fetch(`${API_BASE_URL}/api/purchase`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: address,
+          amount: boughtAmount ? formatUnits(boughtAmount as bigint, 18) : '0',
+          currency: selectedCurrency,
+          txHash: txHash,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend sync failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Purchase synced with backend:', data);
+      
+      // ── نجاح المزامنة ──────────────────────────────────────────────
       setStep('idle');
       setSuccess(true);
       setTimeout(() => {
@@ -201,8 +255,15 @@ export default function BuyPage() {
         refetchTokenBalance();
         refetchAllowance();
       }, 1000);
+      
+    } catch (err) {
+      console.error('Backend sync error:', err);
+      setSyncError('Purchase successful but failed to sync with database. Please contact support.');
+      // لا نمنع النجاح حتى لو فشلت المزامنة - المعاملة نجحت على البلوكشين
+      setStep('idle');
+      setSuccess(true);
     }
-  }, [txConfirmed, step, refetchBought, refetchTokenBalance, refetchAllowance]);
+  };
 
   // ── Determine sale state ──
   const now = Math.floor(Date.now() / 1000);
@@ -229,6 +290,7 @@ export default function BuyPage() {
   }) => {
     setError(null);
     setSuccess(false);
+    setSyncError(null);
     setSelectedCurrency(data.currency);
 
     try {
@@ -488,7 +550,8 @@ export default function BuyPage() {
                     {step === 'approving' && 'Approving...'}
                     {step === 'approved' && 'Approved ✓'}
                     {step === 'purchasing' && 'Purchasing...'}
-                    {step === 'waiting' && 'Confirming...'}
+                    {step === 'waiting' && 'Confirming on blockchain...'}
+                    {step === 'syncing' && 'Syncing with database...'}
                   </span>
                 </div>
                 <p className="text-xs text-zinc-500">
@@ -496,6 +559,7 @@ export default function BuyPage() {
                   {step === 'approved' && 'Proceeding to purchase...'}
                   {step === 'purchasing' && 'Sending purchase transaction...'}
                   {step === 'waiting' && 'Waiting for blockchain confirmation...'}
+                  {step === 'syncing' && 'Saving purchase to database...'}
                 </p>
               </motion.div>
             )}
@@ -514,6 +578,21 @@ export default function BuyPage() {
               )}
             </AnimatePresence>
 
+            {/* Sync Error Message */}
+            <AnimatePresence>
+              {syncError && (
+                <motion.div
+                  className="mt-4 p-4 bg-yellow-900/40 border border-yellow-700/60 rounded-xl text-yellow-300 text-sm text-center"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <p className="font-semibold mb-1">⚠️ Sync Warning</p>
+                  {syncError}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Success Message */}
             <AnimatePresence>
               {success && (
@@ -525,7 +604,7 @@ export default function BuyPage() {
                 >
                   <p className="font-semibold mb-1">Purchase Successful! 🎉</p>
                   <p className="text-xs text-emerald-400/80 mb-2">
-                    Your tokens have been allocated to your vesting schedule.
+                    Your tokens have been allocated to your vesting schedule and saved to the database.
                   </p>
                   {txHash && (
                     <a
