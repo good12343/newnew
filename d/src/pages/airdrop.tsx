@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { formatUnits, type Hash, zeroHash, parseUnits } from 'viem';
+import { formatUnits, type Hash, zeroHash } from 'viem';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { AIRDROP_ABI } from '@/config/abis';
 
 // ─── Backend API Configuration ────────────────────────────────────────────────
-const API_BASE_URL = 'https://info-ef2s.onrender.com'; // ← عدّل هذا
+const API_BASE_URL = 'https://info-ef2s.onrender.com'; // ← عنوان الـ Backend
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,8 +20,7 @@ interface EligibilityData {
 }
 
 /**
- * ✅ Task من قاعدة البيانات (مصدر الحقيقة الوحيد)
- * Frontend لا يُنشئ Tasks - يجلبها فقط
+ * ✅ Task من قاعدة البيانات (مطابق لـ API)
  */
 interface Task {
   id: string;
@@ -31,16 +30,23 @@ interface Task {
   platform: 'X' | 'TELEGRAM' | 'YOUTUBE' | 'ARTICLE';
   category: 'SOCIAL' | 'VIDEO' | 'ARTICLE';
   url: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
- * ✅ حالة المهمة للمستخدم الحالي (من Backend)
+ * ✅ UserTask من قاعدة البيانات
  */
 interface UserTaskStatus {
+  id: string;
+  userId: string;
   taskId: string;
   status: 'PENDING' | 'VERIFIED' | 'REJECTED' | 'REVIEW';
   rewardGiven: boolean;
   completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -81,9 +87,6 @@ function parseContractError(err: unknown): string {
   return 'Transaction failed. Please try again.';
 }
 
-/**
- * ✅ أيقونة المنصة (UI فقط - لا منطق)
- */
 function PlatformIcon({ platform }: { platform: Task['platform'] }) {
   const icons = {
     X: (
@@ -110,9 +113,6 @@ function PlatformIcon({ platform }: { platform: Task['platform'] }) {
   return icons[platform] || null;
 }
 
-/**
- * ✅ لون المنصة (UI فقط)
- */
 function PlatformColor(platform: Task['platform']) {
   const colors = {
     X: 'bg-zinc-800 text-zinc-300 border-zinc-700',
@@ -128,7 +128,7 @@ export default function AirdropPage() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
 
-  // ── Eligibility Data from Backend ───────────────────────────────────────────
+  // ── Eligibility Data ────────────────────────────────────────────────────────
   const [eligibility, setEligibility] = useState<EligibilityData | null>(null);
   const [checkLoading, setCheckLoading] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -141,14 +141,14 @@ export default function AirdropPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
 
-  // ── ✅ Tasks State (Frontend = عرض فقط) ────────────────────────────────────
+  // ── ✅ Tasks State ───────────────────────────────────────────────────────────
   const [tasks, setTasks] = useState<Task[]>([]);
   const [userTasks, setUserTasks] = useState<Record<string, UserTaskStatus>>({});
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [completingTask, setCompletingTask] = useState<string | null>(null);
 
-  // ── Read Constants from Contract ───────────────────────────────────────────
+  // ── Contract Reads ──────────────────────────────────────────────────────────
   const { data: govLockConstant } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -161,7 +161,6 @@ export default function AirdropPage() {
     functionName: 'MAX_WINDOW_EXTENSION',
   });
 
-  // ── Contract Reads ──────────────────────────────────────────────────────────
   const { data: merkleRoot } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -212,12 +211,6 @@ export default function AirdropPage() {
     functionName: 'paused',
   });
 
-  const { data: airdropStartTime } = useReadContract({
-    address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
-    abi: AIRDROP_ABI,
-    functionName: 'startTime',
-  });
-
   const { data: vestingAddress } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -245,8 +238,6 @@ export default function AirdropPage() {
   });
 
   // ── Effects ─────────────────────────────────────────────────────────────────
-
-  // Countdown timer (claimEnd)
   useEffect(() => {
     if (!claimEnd) return;
     const end = Number(claimEnd as bigint);
@@ -256,11 +247,10 @@ export default function AirdropPage() {
     return () => clearInterval(id);
   }, [claimEnd]);
 
-  // Auto-check eligibility when wallet connects
   useEffect(() => {
     if (address && isConnected) {
       checkEligibility(address);
-      fetchTasks(); // ✅ جلب المهام عند الاتصال
+      fetchTasks(); // ✅ جلب المهام
     } else {
       setEligibility(null);
       setCheckError(null);
@@ -270,7 +260,6 @@ export default function AirdropPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, isConnected]);
 
-  // On claim confirmed - sync with backend
   useEffect(() => {
     if (claimConfirmed && claimStep === 'waiting') {
       syncClaimWithBackend();
@@ -278,27 +267,29 @@ export default function AirdropPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimConfirmed, claimStep]);
 
-  // ── ✅ Tasks Handlers (Frontend = عرض + trigger فقط) ───────────────────────
+  // ── ✅ Tasks Handlers ───────────────────────────────────────────────────────
 
   /**
-   * ✅ جلب المهام من Backend
-   * GET /api/tasks/list
+   * ✅ GET /api/tasks/list
+   * الـ API يُرجع Array مباشرة (ليس كائن)
    */
   const fetchTasks = async () => {
     if (!address) return;
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/list?wallet=${address}`);
+      const res = await fetch(`${API_BASE_URL}/api/tasks/list`);
       if (!res.ok) throw new Error('Failed to fetch tasks');
-      const data = await res.json();
-      setTasks(data.tasks || []);
-      // تحويل userTasks إلى Record للوصول السريع
-      const utMap: Record<string, UserTaskStatus> = {};
-      (data.userTasks || []).forEach((ut: UserTaskStatus) => {
-        utMap[ut.taskId] = ut;
-      });
-      setUserTasks(utMap);
+      
+      // ✅ الـ API يُرجع Array مباشرة
+      const allTasks: Task[] = await res.json();
+      
+      // تصفية المهام النشطة فقط
+      const activeTasks = allTasks.filter(t => t.isActive);
+      setTasks(activeTasks);
+
+      // ✅ جلب حالة المستخدم للمهام
+      await fetchUserTasks(activeTasks);
     } catch (err) {
       setTasksError((err as Error).message || 'Failed to load tasks');
     } finally {
@@ -307,23 +298,47 @@ export default function AirdropPage() {
   };
 
   /**
+   * ✅ جلب حالة المستخدم للمهام
+   * نحتاج endpoint منفصل أو نمرر wallet في query
+   */
+  const fetchUserTasks = async (activeTasks: Task[]) => {
+    if (!address || activeTasks.length === 0) return;
+    try {
+      // ✅ نفترض أن الـ Backend يدعم: GET /api/tasks/user-tasks?wallet=0x...
+      // أو يمكنك تعديل الـ API ليُرجع userTasks مع Tasks
+      const res = await fetch(`${API_BASE_URL}/api/tasks/user-tasks?wallet=${address}`);
+      if (!res.ok) {
+        // إذا لم يكن الـ endpoint موجوداً، نتجاهل
+        console.warn('User tasks endpoint not available');
+        return;
+      }
+      const userTasksList: UserTaskStatus[] = await res.json();
+      const utMap: Record<string, UserTaskStatus> = {};
+      userTasksList.forEach((ut) => {
+        utMap[ut.taskId] = ut;
+      });
+      setUserTasks(utMap);
+    } catch (err) {
+      console.warn('Failed to fetch user tasks:', err);
+    }
+  };
+
+  /**
    * ✅ بدء المهمة: فتح الرابط فقط
-   * لا يتم إرسال أي نقاط من Frontend
    */
   const handleStartTask = (task: Task) => {
-    // فتح الرابط في نافذة جديدة
     window.open(task.url, '_blank', 'noopener,noreferrer');
   };
 
   /**
-   * ✅ إكمال المهمة: إرسال طلب للـ Backend فقط
+   * ✅ إكمال المهمة
    * POST /api/tasks/complete
    * Body: { wallet, taskId }
-   * ❌ لا يتم إرسال points من Frontend
    */
   const handleCompleteTask = async (task: Task) => {
     if (!address) return;
     setCompletingTask(task.id);
+    setTasksError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/tasks/complete`, {
         method: 'POST',
@@ -331,7 +346,6 @@ export default function AirdropPage() {
         body: JSON.stringify({
           wallet: address,
           taskId: task.id,
-          // ❌ لا points هنا! Backend يقرأها من DB
         }),
       });
 
@@ -342,19 +356,23 @@ export default function AirdropPage() {
 
       const data = await res.json();
       
-      // تحديث الحالة المحلية بالرد من Backend
+      // ✅ تحديث الحالة المحلية
       setUserTasks(prev => ({
         ...prev,
         [task.id]: {
+          id: data.id || task.id,
+          userId: data.userId || address,
           taskId: task.id,
           status: data.status || 'PENDING',
           rewardGiven: data.rewardGiven || false,
-          completedAt: new Date().toISOString(),
+          completedAt: data.completedAt || new Date().toISOString(),
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt || new Date().toISOString(),
         },
       }));
 
-      // إعادة جلب المهام للتأكد من التزامن
-      await fetchTasks();
+      // إعادة جلب المهام للتأكد
+      await fetchUserTasks(tasks);
 
     } catch (err) {
       setTasksError((err as Error).message || 'Failed to complete task');
@@ -364,7 +382,6 @@ export default function AirdropPage() {
   };
 
   // ── Eligibility Handlers ───────────────────────────────────────────────────
-
   const checkEligibility = async (addr: string) => {
     setCheckLoading(true);
     setCheckError(null);
@@ -670,7 +687,7 @@ export default function AirdropPage() {
             ) : null}
           </motion.div>
 
-          {/* ── ✅ Social Tasks Section (NEW) ─────────────────────────────────── */}
+          {/* ── ✅ Social Tasks Section ───────────────────────────────────────── */}
           <motion.div
             className="bg-zinc-900 rounded-xl border border-zinc-800 p-5"
             initial={{ opacity: 0, y: 10 }}
@@ -767,7 +784,7 @@ export default function AirdropPage() {
                           </div>
                         </div>
 
-                        {/* Action Button */}
+                        {/* Action Buttons */}
                         <div className="flex flex-col items-end gap-1.5">
                           {isCompleted ? (
                             <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-medium">
