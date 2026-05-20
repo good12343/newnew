@@ -306,7 +306,7 @@ export default function AirdropPage() {
     try {
       // ✅ نفترض أن الـ Backend يدعم: GET /api/tasks/user-tasks?wallet=0x...
       // أو يمكنك تعديل الـ API ليُرجع userTasks مع Tasks
-      const res = await fetch(`${API_BASE_URL}/api/tasks/user-tasks?wallet=${address}`);
+      const res = await fetch(`${API_BASE_URL}/api/tasks/status?wallet=${address}`);
       if (!res.ok) {
         // إذا لم يكن الـ endpoint موجوداً، نتجاهل
         console.warn('User tasks endpoint not available');
