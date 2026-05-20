@@ -6,8 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { AIRDROP_ABI } from '@/config/abis';
 
-// ─── Backend API Configuration ────────────────────────────────────────────────
-const API_BASE_URL = 'https://info-ef2s.onrender.com'; // ← عنوان الـ Backend
+const API_BASE_URL = 'https://info-ef2s.onrender.com';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,9 +18,6 @@ interface EligibilityData {
   message?: string;
 }
 
-/**
- * ✅ Task من قاعدة البيانات (مطابق لـ API)
- */
 interface Task {
   id: string;
   title: string;
@@ -31,13 +27,8 @@ interface Task {
   category: 'SOCIAL' | 'VIDEO' | 'ARTICLE';
   url: string;
   isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
 }
 
-/**
- * ✅ UserTask من قاعدة البيانات
- */
 interface UserTaskStatus {
   id: string;
   userId: string;
@@ -141,12 +132,18 @@ export default function AirdropPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
 
-  // ── ✅ Tasks State ───────────────────────────────────────────────────────────
+  // ── Tasks State ─────────────────────────────────────────────────────────────
   const [tasks, setTasks] = useState<Task[]>([]);
   const [userTasks, setUserTasks] = useState<Record<string, UserTaskStatus>>({});
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [completingTask, setCompletingTask] = useState<string | null>(null);
+  const [startedTasks, setStartedTasks] = useState<Set<string>>(new Set());
+
+  // ── Proof Modal State ───────────────────────────────────────────────────────
+  const [showProofModal, setShowProofModal] = useState(false);
+  const [proofData, setProofData] = useState<Record<string, string>>({});
+  const [pendingTask, setPendingTask] = useState<Task | null>(null);
 
   // ── Contract Reads ──────────────────────────────────────────────────────────
   const { data: govLockConstant } = useReadContract({
@@ -250,12 +247,13 @@ export default function AirdropPage() {
   useEffect(() => {
     if (address && isConnected) {
       checkEligibility(address);
-      fetchTasks(); // ✅ جلب المهام
+      fetchTasks();
     } else {
       setEligibility(null);
       setCheckError(null);
       setTasks([]);
       setUserTasks({});
+      setStartedTasks(new Set());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, isConnected]);
@@ -267,12 +265,8 @@ export default function AirdropPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimConfirmed, claimStep]);
 
-  // ── ✅ Tasks Handlers ───────────────────────────────────────────────────────
+  // ── Tasks Handlers ──────────────────────────────────────────────────────────
 
-  /**
-   * ✅ GET /api/tasks/list
-   * الـ API يُرجع Array مباشرة (ليس كائن)
-   */
   const fetchTasks = async () => {
     if (!address) return;
     setTasksLoading(true);
@@ -281,15 +275,12 @@ export default function AirdropPage() {
       const res = await fetch(`${API_BASE_URL}/api/tasks/list`);
       if (!res.ok) throw new Error('Failed to fetch tasks');
       
-      // ✅ الـ API يُرجع Array مباشرة
       const allTasks: Task[] = await res.json();
-      
-      // تصفية المهام النشطة فقط
       const activeTasks = allTasks.filter(t => t.isActive);
       setTasks(activeTasks);
 
-      // ✅ جلب حالة المستخدم للمهام
       await fetchUserTasks(activeTasks);
+      
     } catch (err) {
       setTasksError((err as Error).message || 'Failed to load tasks');
     } finally {
@@ -297,24 +288,24 @@ export default function AirdropPage() {
     }
   };
 
-  /**
-   * ✅ جلب حالة المستخدم للمهام
-   * نحتاج endpoint منفصل أو نمرر wallet في query
-   */
   const fetchUserTasks = async (activeTasks: Task[]) => {
     if (!address || activeTasks.length === 0) return;
     try {
-      // ✅ نفترض أن الـ Backend يدعم: GET /api/tasks/user-tasks?wallet=0x...
-      // أو يمكنك تعديل الـ API ليُرجع userTasks مع Tasks
       const res = await fetch(`${API_BASE_URL}/api/tasks/status?wallet=${address}`);
-      if (!res.ok) {
-        // إذا لم يكن الـ endpoint موجوداً، نتجاهل
-        console.warn('User tasks endpoint not available');
+      
+      if (res.status === 404) {
+        setUserTasks({});
         return;
       }
-      const userTasksList: UserTaskStatus[] = await res.json();
+      
+      if (!res.ok) {
+        console.warn('Failed to fetch user tasks:', res.status);
+        return;
+      }
+
+      const userTasksList = await res.json();
       const utMap: Record<string, UserTaskStatus> = {};
-      userTasksList.forEach((ut) => {
+      userTasksList.forEach((ut: any) => {
         utMap[ut.taskId] = ut;
       });
       setUserTasks(utMap);
@@ -323,29 +314,56 @@ export default function AirdropPage() {
     }
   };
 
-  /**
-   * ✅ بدء المهمة: فتح الرابط فقط
-   */
   const handleStartTask = (task: Task) => {
     window.open(task.url, '_blank', 'noopener,noreferrer');
+    setStartedTasks(prev => new Set(prev).add(task.id));
   };
 
-  /**
-   * ✅ إكمال المهمة
-   * POST /api/tasks/complete
-   * Body: { wallet, taskId }
-   */
-  const handleCompleteTask = async (task: Task) => {
-    if (!address) return;
-    setCompletingTask(task.id);
+  // ── Proof Modal Handlers ────────────────────────────────────────────────────
+  const openProofModal = (task: Task) => {
+    if (!startedTasks.has(task.id)) {
+      setTasksError('⚠️ Please click "Start Task" first to open the link');
+      return;
+    }
+    setPendingTask(task);
+    setProofData({});
+    setShowProofModal(true);
+  };
+
+  const submitProof = async () => {
+    if (!pendingTask || !address) return;
+    
+    setShowProofModal(false);
+    setCompletingTask(pendingTask.id);
     setTasksError(null);
+    
+    // بناء الـ proof حسب المنصة
+    const proof: any = {};
+    
+    if (pendingTask.platform === 'X') {
+      proof.username = proofData.username;
+    }
+    
+    if (pendingTask.platform === 'TELEGRAM') {
+      proof.telegramId = proofData.telegramId;
+    }
+    
+    if (pendingTask.platform === 'YOUTUBE') {
+      proof.channelId = proofData.channelId;
+    }
+    
+    if (pendingTask.platform === 'ARTICLE') {
+      proof.timeSpent = parseInt(proofData.timeSpent || '30');
+    }
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/tasks/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           wallet: address,
-          taskId: task.id,
+          taskId: pendingTask.id,
+          proof,
         }),
       });
 
@@ -356,28 +374,27 @@ export default function AirdropPage() {
 
       const data = await res.json();
       
-      // ✅ تحديث الحالة المحلية
       setUserTasks(prev => ({
         ...prev,
-        [task.id]: {
-          id: data.id || task.id,
-          userId: data.userId || address,
-          taskId: task.id,
+        [pendingTask.id]: {
+          id: data.id || pendingTask.id,
+          userId: address,
+          taskId: pendingTask.id,
           status: data.status || 'PENDING',
           rewardGiven: data.rewardGiven || false,
-          completedAt: data.completedAt || new Date().toISOString(),
-          createdAt: data.createdAt || new Date().toISOString(),
-          updatedAt: data.updatedAt || new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         },
       }));
 
-      // إعادة جلب المهام للتأكد
-      await fetchUserTasks(tasks);
+      await fetchTasks();
 
     } catch (err) {
       setTasksError((err as Error).message || 'Failed to complete task');
     } finally {
       setCompletingTask(null);
+      setPendingTask(null);
     }
   };
 
@@ -488,7 +505,6 @@ export default function AirdropPage() {
   const alreadyClaimed = (claimed as boolean) || eligibility?.alreadyClaimed || claimSuccess;
   const isClaimLoading = claimStep !== 'idle';
 
-  // ── ✅ Tasks Derived ────────────────────────────────────────────────────────
   const getTaskStatus = (taskId: string): UserTaskStatus | undefined => userTasks[taskId];
 
   // ── Status Label ────────────────────────────────────────────────────────────
@@ -503,9 +519,120 @@ export default function AirdropPage() {
 
   const stateInfo = getStatusLabel();
 
+  // ── Proof Modal Component ───────────────────────────────────────────────────
+  const ProofModal = () => {
+    if (!showProofModal || !pendingTask) return null;
+    
+    return (
+      <AnimatePresence>
+        <motion.div 
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div 
+            className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full"
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 20 }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className={`p-2 rounded-lg ${PlatformColor(pendingTask.platform)}`}>
+                <PlatformIcon platform={pendingTask.platform} />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-white">Verify {pendingTask.platform}</h3>
+                <p className="text-sm text-zinc-400">{pendingTask.title}</p>
+              </div>
+            </div>
+            
+            {/* X Verification */}
+            {pendingTask.platform === 'X' && (
+              <div className="space-y-3">
+                <label className="block text-sm text-zinc-400">X Username (@handle)</label>
+                <input
+                  type="text"
+                  value={proofData.username || ''}
+                  onChange={e => setProofData({...proofData, username: e.target.value})}
+                  placeholder="@username"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
+                />
+                <p className="text-xs text-zinc-500">Enter your X handle without @</p>
+              </div>
+            )}
+            
+            {/* Telegram Verification */}
+            {pendingTask.platform === 'TELEGRAM' && (
+              <div className="space-y-3">
+                <label className="block text-sm text-zinc-400">Telegram Numeric ID</label>
+                <input
+                  type="text"
+                  value={proofData.telegramId || ''}
+                  onChange={e => setProofData({...proofData, telegramId: e.target.value})}
+                  placeholder="123456789"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
+                />
+                <p className="text-xs text-zinc-500">Get your ID from @userinfobot</p>
+              </div>
+            )}
+            
+            {/* YouTube Verification */}
+            {pendingTask.platform === 'YOUTUBE' && (
+              <div className="space-y-3">
+                <label className="block text-sm text-zinc-400">YouTube Channel ID</label>
+                <input
+                  type="text"
+                  value={proofData.channelId || ''}
+                  onChange={e => setProofData({...proofData, channelId: e.target.value})}
+                  placeholder="UC..."
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
+                />
+                <p className="text-xs text-zinc-500">Your YouTube channel ID</p>
+              </div>
+            )}
+            
+            {/* Article Verification */}
+            {pendingTask.platform === 'ARTICLE' && (
+              <div className="space-y-3">
+                <label className="block text-sm text-zinc-400">Time Spent (seconds)</label>
+                <input
+                  type="number"
+                  value={proofData.timeSpent || '30'}
+                  onChange={e => setProofData({...proofData, timeSpent: e.target.value})}
+                  placeholder="30"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
+                />
+                <p className="text-xs text-zinc-500">Minimum 30 seconds required</p>
+              </div>
+            )}
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => { setShowProofModal(false); setPendingTask(null); }}
+                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitProof}
+                disabled={!proofData.username && !proofData.telegramId && !proofData.channelId && !proofData.timeSpent}
+                className="flex-1 py-3 bg-teal-600 hover:bg-teal-500 disabled:bg-zinc-800 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-colors"
+              >
+                Verify & Complete
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="py-12 px-4 min-h-screen bg-black">
+      <ProofModal />
+      
       <motion.div
         className="max-w-2xl mx-auto"
         initial={{ opacity: 0 }}
@@ -687,7 +814,7 @@ export default function AirdropPage() {
             ) : null}
           </motion.div>
 
-          {/* ── ✅ Social Tasks Section ───────────────────────────────────────── */}
+          {/* ── Social Tasks Section ──────────────────────────────────────────── */}
           <motion.div
             className="bg-zinc-900 rounded-xl border border-zinc-800 p-5"
             initial={{ opacity: 0, y: 10 }}
@@ -739,6 +866,7 @@ export default function AirdropPage() {
                   const isPending = userTask?.status === 'PENDING' || userTask?.status === 'REVIEW';
                   const isRejected = userTask?.status === 'REJECTED';
                   const isProcessing = completingTask === task.id;
+                  const hasStarted = startedTasks.has(task.id);
 
                   return (
                     <motion.div
@@ -755,7 +883,6 @@ export default function AirdropPage() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          {/* Title + Platform Badge */}
                           <div className="flex items-center gap-2 mb-1.5">
                             <h3 className="text-sm font-medium text-zinc-200 truncate">
                               {task.title}
@@ -770,12 +897,10 @@ export default function AirdropPage() {
                             </span>
                           </div>
 
-                          {/* Description */}
                           <p className="text-xs text-zinc-400 mb-2 line-clamp-2">
                             {task.description}
                           </p>
 
-                          {/* Points */}
                           <div className="flex items-center gap-1">
                             <span className="text-xs font-semibold text-teal-400">
                               +{task.points}
@@ -784,7 +909,6 @@ export default function AirdropPage() {
                           </div>
                         </div>
 
-                        {/* Action Buttons */}
                         <div className="flex flex-col items-end gap-1.5">
                           {isCompleted ? (
                             <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-medium">
@@ -811,15 +935,19 @@ export default function AirdropPage() {
                             <div className="flex flex-col items-end gap-1.5">
                               <button
                                 onClick={() => handleStartTask(task)}
-                                className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-xs font-medium rounded-md transition-all active:scale-95"
+                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all active:scale-95 ${
+                                  hasStarted
+                                    ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-700/40'
+                                    : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200'
+                                }`}
                               >
-                                Start Task
+                                {hasStarted ? '✓ Link Opened' : 'Start Task'}
                               </button>
                               <button
-                                onClick={() => handleCompleteTask(task)}
-                                disabled={isProcessing}
+                                onClick={() => openProofModal(task)}
+                                disabled={isProcessing || !hasStarted}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all active:scale-95 ${
-                                  isProcessing
+                                  isProcessing || !hasStarted
                                     ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                                     : 'bg-teal-600 hover:bg-teal-500 text-white'
                                 }`}
@@ -839,7 +967,6 @@ export default function AirdropPage() {
                             </div>
                           )}
 
-                          {/* Status details */}
                           {isCompleted && (
                             <span className="text-[10px] text-emerald-400/70">
                               {task.points} Points Earned
