@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = 'https://info-ef2s.onrender.com';
+const API_BASE_URL = 'https://info-hyqj.onrender.com';
 
 interface ReviewItem {
   id: string;
