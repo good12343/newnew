@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { AIRDROP_ABI } from '@/config/abis';
 
-const API_BASE_URL = 'https://info-hyqj.onrender.com';
+const API_BASE_URL = 'https://info-ef2s.onrender.com';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,41 @@ interface EligibilityData {
   proof: `0x${string}`[];
   alreadyClaimed: boolean;
   message?: string;
+  rootSet?: boolean;
+  root?: string;
+}
+
+interface AirdropStats {
+  totalUsers: number;
+  eligibleUsers: number;
+  claimedUsers: number;
+  totalPoints: number;
+  merkleRoot: string;
+  contractRoot: string;
+  inSync: boolean;
+  lastSyncedAt: string | null;
+}
+
+interface MerkleStatus {
+  current: {
+    dbRoot: string;
+    contractRoot: string;
+    inSync: boolean;
+    totalEligible: number;
+    totalAmountWei: string;
+    status: string;
+    lastSyncedAt: string | null;
+    errorMessage: string | null;
+  };
+  latestJob: {
+    id: string;
+    status: string;
+    root: string | null;
+    txHash: string | null;
+    eligibleCount: number;
+    startedAt: string | null;
+    completedAt: string | null;
+  } | null;
 }
 
 interface Task {
@@ -119,6 +154,11 @@ export default function AirdropPage() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
 
+  // ── Backend State ───────────────────────────────────────────────────────────
+  const [airdropStats, setAirdropStats] = useState<AirdropStats | null>(null);
+  const [merkleStatus, setMerkleStatus] = useState<MerkleStatus | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+
   // ── Eligibility Data ────────────────────────────────────────────────────────
   const [eligibility, setEligibility] = useState<EligibilityData | null>(null);
   const [checkLoading, setCheckLoading] = useState(false);
@@ -140,12 +180,7 @@ export default function AirdropPage() {
   const [completingTask, setCompletingTask] = useState<string | null>(null);
   const [startedTasks, setStartedTasks] = useState<Set<string>>(new Set());
 
-  // ── Proof Modal State ───────────────────────────────────────────────────────
-  const [showProofModal, setShowProofModal] = useState(false);
-  const [proofData, setProofData] = useState<Record<string, string>>({});
-  const [pendingTask, setPendingTask] = useState<Task | null>(null);
-
-  // ── Contract Reads ──────────────────────────────────────────────────────────
+  // ── Contract Reads (fallback for on-chain data) ─────────────────────────────
   const { data: govLockConstant } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -156,12 +191,6 @@ export default function AirdropPage() {
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
     functionName: 'MAX_WINDOW_EXTENSION',
-  });
-
-  const { data: merkleRoot } = useReadContract({
-    address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
-    abi: AIRDROP_ABI,
-    functionName: 'merkleRoot',
   });
 
   const { data: claimStart } = useReadContract({
@@ -245,6 +274,12 @@ export default function AirdropPage() {
   }, [claimEnd]);
 
   useEffect(() => {
+    // Fetch global stats on mount
+    fetchAirdropStats();
+    fetchMerkleStatus();
+  }, []);
+
+  useEffect(() => {
     if (address && isConnected) {
       checkEligibility(address);
       fetchTasks();
@@ -265,6 +300,33 @@ export default function AirdropPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimConfirmed, claimStep]);
 
+  // ── Backend Handlers ────────────────────────────────────────────────────────
+
+  const fetchAirdropStats = async () => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/airdrop/stats`);
+      if (!res.ok) throw new Error('Failed to fetch stats');
+      const data: AirdropStats = await res.json();
+      setAirdropStats(data);
+    } catch (err) {
+      console.warn('Failed to fetch airdrop stats:', err);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  const fetchMerkleStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/merkle-status`);
+      if (!res.ok) throw new Error('Failed to fetch merkle status');
+      const data: MerkleStatus = await res.json();
+      setMerkleStatus(data);
+    } catch (err) {
+      console.warn('Failed to fetch merkle status:', err);
+    }
+  };
+
   // ── Tasks Handlers ──────────────────────────────────────────────────────────
 
   const fetchTasks = async () => {
@@ -280,7 +342,6 @@ export default function AirdropPage() {
       setTasks(activeTasks);
 
       await fetchUserTasks(activeTasks);
-      
     } catch (err) {
       setTasksError((err as Error).message || 'Failed to load tasks');
     } finally {
@@ -319,51 +380,23 @@ export default function AirdropPage() {
     setStartedTasks(prev => new Set(prev).add(task.id));
   };
 
-  // ── Proof Modal Handlers ────────────────────────────────────────────────────
-  const openProofModal = (task: Task) => {
+  const handleCompleteTask = async (task: Task) => {
+    if (!address) return;
+    
     if (!startedTasks.has(task.id)) {
       setTasksError('⚠️ Please click "Start Task" first to open the link');
       return;
     }
-    setPendingTask(task);
-    setProofData({});
-    setShowProofModal(true);
-  };
-
-  const submitProof = async () => {
-    if (!pendingTask || !address) return;
     
-    setShowProofModal(false);
-    setCompletingTask(pendingTask.id);
+    setCompletingTask(task.id);
     setTasksError(null);
-    
-    // بناء الـ proof حسب المنصة
-    const proof: any = {};
-    
-    if (pendingTask.platform === 'X') {
-      proof.username = proofData.username;
-    }
-    
-    if (pendingTask.platform === 'TELEGRAM') {
-      proof.telegramId = proofData.telegramId;
-    }
-    
-    if (pendingTask.platform === 'YOUTUBE') {
-      proof.channelId = proofData.channelId;
-    }
-    
-    if (pendingTask.platform === 'ARTICLE') {
-      proof.timeSpent = parseInt(proofData.timeSpent || '30');
-    }
-
     try {
       const res = await fetch(`${API_BASE_URL}/api/tasks/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           wallet: address,
-          taskId: pendingTask.id,
-          proof,
+          taskId: task.id,
         }),
       });
 
@@ -376,10 +409,10 @@ export default function AirdropPage() {
       
       setUserTasks(prev => ({
         ...prev,
-        [pendingTask.id]: {
-          id: data.id || pendingTask.id,
+        [task.id]: {
+          id: data.id || task.id,
           userId: address,
-          taskId: pendingTask.id,
+          taskId: task.id,
           status: data.status || 'PENDING',
           rewardGiven: data.rewardGiven || false,
           completedAt: new Date().toISOString(),
@@ -394,7 +427,6 @@ export default function AirdropPage() {
       setTasksError((err as Error).message || 'Failed to complete task');
     } finally {
       setCompletingTask(null);
-      setPendingTask(null);
     }
   };
 
@@ -404,7 +436,8 @@ export default function AirdropPage() {
     setCheckError(null);
     setEligibility(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/airdrop/eligibility?address=${addr}`);
+      // Use the new endpoint format: /airdrop/eligibility/:wallet
+      const res = await fetch(`${API_BASE_URL}/airdrop/eligibility/${addr}`);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to check eligibility');
@@ -456,14 +489,13 @@ export default function AirdropPage() {
     setClaimStep('syncing');
     setSyncError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/airdrop/claim`, {
+      const response = await fetch(`${API_BASE_URL}/airdrop/claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          walletAddress: address,
+          wallet: address,
           txHash: claimTxHash,
-          amount: eligibility.amount,
-          timestamp: new Date().toISOString(),
+          amountWei: eligibility.amount,
         }),
       });
       if (!response.ok) throw new Error(`Backend sync failed: ${response.status}`);
@@ -485,7 +517,11 @@ export default function AirdropPage() {
   const now = Date.now() / 1000;
   const start = claimStart ? Number(claimStart as bigint) : 0;
   const end = claimEnd ? Number(claimEnd as bigint) : 0;
-  const rootSet = merkleRoot ? (merkleRoot as `0x${string}`) !== zeroHash : false;
+  
+  // Use backend data first, fallback to contract
+  const merkleRootValue = airdropStats?.merkleRoot || (merkleStatus?.current?.dbRoot);
+  const rootSet = merkleRootValue ? merkleRootValue !== '0x0' && merkleRootValue !== zeroHash : false;
+  
   const isFinalized = finalized === true;
   const isActive = rootSet && !isFinalized && !isPaused && now >= start && now <= end;
   const claimWindowOpen = rootSet && !isFinalized && !isPaused && now >= start && now <= end;
@@ -493,7 +529,9 @@ export default function AirdropPage() {
   const claimWindowEnded = rootSet && (isFinalized || now > end);
 
   const allocationProgress =
-    totalAllocated && maxAllocation && (maxAllocation as bigint) > 0n
+    airdropStats && airdropStats.totalPoints > 0
+      ? Math.min(100, (airdropStats.eligibleUsers / Math.max(airdropStats.totalUsers, 1)) * 100)
+      : totalAllocated && maxAllocation && (maxAllocation as bigint) > 0n
       ? Math.min(
           100,
           (Number(formatUnits(totalAllocated as bigint, 18)) /
@@ -519,120 +557,9 @@ export default function AirdropPage() {
 
   const stateInfo = getStatusLabel();
 
-  // ── Proof Modal Component ───────────────────────────────────────────────────
-  const ProofModal = () => {
-    if (!showProofModal || !pendingTask) return null;
-    
-    return (
-      <AnimatePresence>
-        <motion.div 
-          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <motion.div 
-            className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full"
-            initial={{ scale: 0.9, y: 20 }}
-            animate={{ scale: 1, y: 0 }}
-            exit={{ scale: 0.9, y: 20 }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className={`p-2 rounded-lg ${PlatformColor(pendingTask.platform)}`}>
-                <PlatformIcon platform={pendingTask.platform} />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-white">Verify {pendingTask.platform}</h3>
-                <p className="text-sm text-zinc-400">{pendingTask.title}</p>
-              </div>
-            </div>
-            
-            {/* X Verification */}
-            {pendingTask.platform === 'X' && (
-              <div className="space-y-3">
-                <label className="block text-sm text-zinc-400">X Username (@handle)</label>
-                <input
-                  type="text"
-                  value={proofData.username || ''}
-                  onChange={e => setProofData({...proofData, username: e.target.value})}
-                  placeholder="@username"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
-                />
-                <p className="text-xs text-zinc-500">Enter your X handle without @</p>
-              </div>
-            )}
-            
-            {/* Telegram Verification */}
-            {pendingTask.platform === 'TELEGRAM' && (
-              <div className="space-y-3">
-                <label className="block text-sm text-zinc-400">Telegram Numeric ID</label>
-                <input
-                  type="text"
-                  value={proofData.telegramId || ''}
-                  onChange={e => setProofData({...proofData, telegramId: e.target.value})}
-                  placeholder="123456789"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
-                />
-                <p className="text-xs text-zinc-500">Get your ID from @userinfobot</p>
-              </div>
-            )}
-            
-            {/* YouTube Verification */}
-            {pendingTask.platform === 'YOUTUBE' && (
-              <div className="space-y-3">
-                <label className="block text-sm text-zinc-400">YouTube Channel ID</label>
-                <input
-                  type="text"
-                  value={proofData.channelId || ''}
-                  onChange={e => setProofData({...proofData, channelId: e.target.value})}
-                  placeholder="UC..."
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
-                />
-                <p className="text-xs text-zinc-500">Your YouTube channel ID</p>
-              </div>
-            )}
-            
-            {/* Article Verification */}
-            {pendingTask.platform === 'ARTICLE' && (
-              <div className="space-y-3">
-                <label className="block text-sm text-zinc-400">Time Spent (seconds)</label>
-                <input
-                  type="number"
-                  value={proofData.timeSpent || '30'}
-                  onChange={e => setProofData({...proofData, timeSpent: e.target.value})}
-                  placeholder="30"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 transition-colors"
-                />
-                <p className="text-xs text-zinc-500">Minimum 30 seconds required</p>
-              </div>
-            )}
-            
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => { setShowProofModal(false); setPendingTask(null); }}
-                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitProof}
-                disabled={!proofData.username && !proofData.telegramId && !proofData.channelId && !proofData.timeSpent}
-                className="flex-1 py-3 bg-teal-600 hover:bg-teal-500 disabled:bg-zinc-800 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-colors"
-              >
-                Verify & Complete
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      </AnimatePresence>
-    );
-  };
-
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="py-12 px-4 min-h-screen bg-black">
-      <ProofModal />
-      
       <motion.div
         className="max-w-2xl mx-auto"
         initial={{ opacity: 0 }}
@@ -683,32 +610,72 @@ export default function AirdropPage() {
               </div>
             </div>
 
-            <div>
-              <div className="flex justify-between text-xs text-zinc-500 mb-1.5">
-                <span>
-                  Allocated:{' '}
-                  <span className="text-zinc-300">
-                    {totalAllocated ? formatLargeNumber(totalAllocated as bigint) : '0'} FOR
+            {/* ── Backend Stats ── */}
+            {airdropStats && (
+              <div className="mb-4 p-3 bg-zinc-800/40 rounded-lg">
+                <div className="flex justify-between text-xs text-zinc-500 mb-1.5">
+                  <span>
+                    Eligible:{' '}
+                    <span className="text-zinc-300">
+                      {airdropStats.eligibleUsers} / {airdropStats.totalUsers} users
+                    </span>
                   </span>
-                </span>
-                <span>
-                  Max Cap:{' '}
-                  <span className="text-zinc-300">
-                    {maxAllocation ? formatLargeNumber(maxAllocation as bigint) : '—'} FOR
+                  <span>
+                    Claimed:{' '}
+                    <span className="text-zinc-300">
+                      {airdropStats.claimedUsers}
+                    </span>
                   </span>
-                </span>
+                </div>
+                <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-purple-600 to-teal-500 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${allocationProgress}%` }}
+                    transition={{ duration: 1, ease: 'easeOut' }}
+                  />
+                </div>
+                <p className="text-right text-xs text-zinc-500 mt-1">{allocationProgress.toFixed(1)}% allocated</p>
               </div>
-              <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-purple-600 to-teal-500 rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${allocationProgress}%` }}
-                  transition={{ duration: 1, ease: 'easeOut' }}
-                />
-              </div>
-              <p className="text-right text-xs text-zinc-500 mt-1">{allocationProgress.toFixed(1)}% allocated</p>
-            </div>
+            )}
 
+            {/* ── Merkle Status ── */}
+            {merkleStatus && (
+              <div className="mt-4 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-2">
+                <div className="bg-zinc-800/40 rounded-lg p-2">
+                  <p className="text-[10px] text-zinc-500">DB Root</p>
+                  <p className="text-xs text-zinc-300 font-mono truncate">
+                    {merkleStatus.current.dbRoot !== '0x0' 
+                      ? merkleStatus.current.dbRoot.slice(0, 12) + '...' 
+                      : 'Not Set'}
+                  </p>
+                </div>
+                <div className="bg-zinc-800/40 rounded-lg p-2">
+                  <p className="text-[10px] text-zinc-500">Contract Root</p>
+                  <p className="text-xs text-zinc-300 font-mono truncate">
+                    {merkleStatus.current.contractRoot !== '0x0'
+                      ? merkleStatus.current.contractRoot.slice(0, 12) + '...'
+                      : 'Not Set'}
+                  </p>
+                </div>
+                <div className="bg-zinc-800/40 rounded-lg p-2">
+                  <p className="text-[10px] text-zinc-500">Sync Status</p>
+                  <p className={`text-xs font-medium ${merkleStatus.current.inSync ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                    {merkleStatus.current.inSync ? '✓ In Sync' : '⚠ Out of Sync'}
+                  </p>
+                </div>
+                <div className="bg-zinc-800/40 rounded-lg p-2">
+                  <p className="text-[10px] text-zinc-500">Last Sync</p>
+                  <p className="text-xs text-zinc-300">
+                    {merkleStatus.current.lastSyncedAt
+                      ? new Date(merkleStatus.current.lastSyncedAt).toLocaleString()
+                      : 'Never'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── Contract Details ── */}
             <div className="mt-4 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-2">
               <div className="bg-zinc-800/40 rounded-lg p-2">
                 <p className="text-[10px] text-zinc-500">Token</p>
@@ -808,6 +775,11 @@ export default function AirdropPage() {
                     <p className="text-zinc-500 text-sm mt-2">
                       {eligibility.message || 'This address is not included in the airdrop list.'}
                     </p>
+                    {!eligibility.rootSet && (
+                      <p className="text-yellow-400 text-xs mt-2">
+                        ⚠️ Merkle root not set yet. Please complete tasks and wait for the admin to sync.
+                      </p>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -944,7 +916,7 @@ export default function AirdropPage() {
                                 {hasStarted ? '✓ Link Opened' : 'Start Task'}
                               </button>
                               <button
-                                onClick={() => openProofModal(task)}
+                                onClick={() => handleCompleteTask(task)}
                                 disabled={isProcessing || !hasStarted}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all active:scale-95 ${
                                   isProcessing || !hasStarted
@@ -1006,7 +978,7 @@ export default function AirdropPage() {
 
               {!rootSet && (
                 <div className="mb-3 p-3 bg-zinc-800/60 border border-zinc-700/40 rounded-lg text-zinc-400 text-xs text-center">
-                  Merkle root not set yet. Please wait for announcement.
+                  Merkle root not set yet. Complete tasks and wait for admin sync.
                 </div>
               )}
 
@@ -1125,6 +1097,7 @@ export default function AirdropPage() {
             <p>• Each address can only claim <span className="text-zinc-300">once</span>.</p>
             <p>• Claims are <span className="text-zinc-300">blocked when paused or finalized</span>.</p>
             <p>• Max window extension: <span className="text-zinc-300">{maxWindowExtConstant ? `${Number(maxWindowExtConstant as bigint) / 86400} days` : '...'}</span>.</p>
+            <p>• <span className="text-zinc-300">Merkle root is synced hourly</span> by the admin. Complete tasks and wait for the next sync.</p>
           </motion.div>
         </div>
       </motion.div>
