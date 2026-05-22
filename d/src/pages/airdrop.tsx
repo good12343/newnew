@@ -20,39 +20,6 @@ interface EligibilityData {
   root?: string;
 }
 
-interface AirdropStats {
-  totalUsers: number;
-  eligibleUsers: number;
-  claimedUsers: number;
-  totalPoints: number;
-  merkleRoot: string;
-  contractRoot: string;
-  inSync: boolean;
-  lastSyncedAt: string | null;
-}
-
-interface MerkleStatus {
-  current: {
-    dbRoot: string;
-    contractRoot: string;
-    inSync: boolean;
-    totalEligible: number;
-    totalAmountWei: string;
-    status: string;
-    lastSyncedAt: string | null;
-    errorMessage: string | null;
-  };
-  latestJob: {
-    id: string;
-    status: string;
-    root: string | null;
-    txHash: string | null;
-    eligibleCount: number;
-    startedAt: string | null;
-    completedAt: string | null;
-  } | null;
-}
-
 interface Task {
   id: string;
   title: string;
@@ -154,11 +121,6 @@ export default function AirdropPage() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
 
-  // ── Backend State ───────────────────────────────────────────────────────────
-  const [airdropStats, setAirdropStats] = useState<AirdropStats | null>(null);
-  const [merkleStatus, setMerkleStatus] = useState<MerkleStatus | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-
   // ── Eligibility Data ────────────────────────────────────────────────────────
   const [eligibility, setEligibility] = useState<EligibilityData | null>(null);
   const [checkLoading, setCheckLoading] = useState(false);
@@ -180,7 +142,7 @@ export default function AirdropPage() {
   const [completingTask, setCompletingTask] = useState<string | null>(null);
   const [startedTasks, setStartedTasks] = useState<Set<string>>(new Set());
 
-  // ── Contract Reads (fallback for on-chain data) ─────────────────────────────
+  // ── Contract Reads (PRIMARY - for airdrop state) ──────────────────────────
   const { data: govLockConstant } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -191,6 +153,12 @@ export default function AirdropPage() {
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
     functionName: 'MAX_WINDOW_EXTENSION',
+  });
+
+  const { data: merkleRoot } = useReadContract({
+    address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
+    abi: AIRDROP_ABI,
+    functionName: 'merkleRoot',
   });
 
   const { data: claimStart } = useReadContract({
@@ -274,12 +242,6 @@ export default function AirdropPage() {
   }, [claimEnd]);
 
   useEffect(() => {
-    // Fetch global stats on mount
-    fetchAirdropStats();
-    fetchMerkleStatus();
-  }, []);
-
-  useEffect(() => {
     if (address && isConnected) {
       checkEligibility(address);
       fetchTasks();
@@ -299,33 +261,6 @@ export default function AirdropPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimConfirmed, claimStep]);
-
-  // ── Backend Handlers ────────────────────────────────────────────────────────
-
-  const fetchAirdropStats = async () => {
-    setStatsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/airdrop/stats`);
-      if (!res.ok) throw new Error('Failed to fetch stats');
-      const data: AirdropStats = await res.json();
-      setAirdropStats(data);
-    } catch (err) {
-      console.warn('Failed to fetch airdrop stats:', err);
-    } finally {
-      setStatsLoading(false);
-    }
-  };
-
-  const fetchMerkleStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/merkle-status`);
-      if (!res.ok) throw new Error('Failed to fetch merkle status');
-      const data: MerkleStatus = await res.json();
-      setMerkleStatus(data);
-    } catch (err) {
-      console.warn('Failed to fetch merkle status:', err);
-    }
-  };
 
   // ── Tasks Handlers ──────────────────────────────────────────────────────────
 
@@ -436,16 +371,15 @@ export default function AirdropPage() {
     setCheckError(null);
     setEligibility(null);
     try {
-      // Use the new endpoint format: /airdrop/eligibility/:wallet
+      // Try backend first
       const res = await fetch(`${API_BASE_URL}/airdrop/eligibility/${addr}`);
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to check eligibility');
-      }
+      if (!res.ok) throw new Error('Backend eligibility check failed');
       const data: EligibilityData = await res.json();
       setEligibility(data);
     } catch (err) {
-      setCheckError((err as Error).message || 'Failed to check eligibility. Please try again.');
+      // Fallback: check from contract directly
+      console.warn('Backend eligibility failed, using contract data:', err);
+      setCheckError('Backend unavailable. Please try again later.');
     } finally {
       setCheckLoading(false);
     }
@@ -517,11 +451,7 @@ export default function AirdropPage() {
   const now = Date.now() / 1000;
   const start = claimStart ? Number(claimStart as bigint) : 0;
   const end = claimEnd ? Number(claimEnd as bigint) : 0;
-  
-  // Use backend data first, fallback to contract
-  const merkleRootValue = airdropStats?.merkleRoot || (merkleStatus?.current?.dbRoot);
-  const rootSet = merkleRootValue ? merkleRootValue !== '0x0' && merkleRootValue !== zeroHash : false;
-  
+  const rootSet = merkleRoot ? (merkleRoot as `0x${string}`) !== zeroHash : false;
   const isFinalized = finalized === true;
   const isActive = rootSet && !isFinalized && !isPaused && now >= start && now <= end;
   const claimWindowOpen = rootSet && !isFinalized && !isPaused && now >= start && now <= end;
@@ -529,9 +459,7 @@ export default function AirdropPage() {
   const claimWindowEnded = rootSet && (isFinalized || now > end);
 
   const allocationProgress =
-    airdropStats && airdropStats.totalPoints > 0
-      ? Math.min(100, (airdropStats.eligibleUsers / Math.max(airdropStats.totalUsers, 1)) * 100)
-      : totalAllocated && maxAllocation && (maxAllocation as bigint) > 0n
+    totalAllocated && maxAllocation && (maxAllocation as bigint) > 0n
       ? Math.min(
           100,
           (Number(formatUnits(totalAllocated as bigint, 18)) /
@@ -610,72 +538,32 @@ export default function AirdropPage() {
               </div>
             </div>
 
-            {/* ── Backend Stats ── */}
-            {airdropStats && (
-              <div className="mb-4 p-3 bg-zinc-800/40 rounded-lg">
-                <div className="flex justify-between text-xs text-zinc-500 mb-1.5">
-                  <span>
-                    Eligible:{' '}
-                    <span className="text-zinc-300">
-                      {airdropStats.eligibleUsers} / {airdropStats.totalUsers} users
-                    </span>
+            <div>
+              <div className="flex justify-between text-xs text-zinc-500 mb-1.5">
+                <span>
+                  Allocated:{' '}
+                  <span className="text-zinc-300">
+                    {totalAllocated ? formatLargeNumber(totalAllocated as bigint) : '0'} FOR
                   </span>
-                  <span>
-                    Claimed:{' '}
-                    <span className="text-zinc-300">
-                      {airdropStats.claimedUsers}
-                    </span>
+                </span>
+                <span>
+                  Max Cap:{' '}
+                  <span className="text-zinc-300">
+                    {maxAllocation ? formatLargeNumber(maxAllocation as bigint) : '—'} FOR
                   </span>
-                </div>
-                <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-purple-600 to-teal-500 rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${allocationProgress}%` }}
-                    transition={{ duration: 1, ease: 'easeOut' }}
-                  />
-                </div>
-                <p className="text-right text-xs text-zinc-500 mt-1">{allocationProgress.toFixed(1)}% allocated</p>
+                </span>
               </div>
-            )}
-
-            {/* ── Merkle Status ── */}
-            {merkleStatus && (
-              <div className="mt-4 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-2">
-                <div className="bg-zinc-800/40 rounded-lg p-2">
-                  <p className="text-[10px] text-zinc-500">DB Root</p>
-                  <p className="text-xs text-zinc-300 font-mono truncate">
-                    {merkleStatus.current.dbRoot !== '0x0' 
-                      ? merkleStatus.current.dbRoot.slice(0, 12) + '...' 
-                      : 'Not Set'}
-                  </p>
-                </div>
-                <div className="bg-zinc-800/40 rounded-lg p-2">
-                  <p className="text-[10px] text-zinc-500">Contract Root</p>
-                  <p className="text-xs text-zinc-300 font-mono truncate">
-                    {merkleStatus.current.contractRoot !== '0x0'
-                      ? merkleStatus.current.contractRoot.slice(0, 12) + '...'
-                      : 'Not Set'}
-                  </p>
-                </div>
-                <div className="bg-zinc-800/40 rounded-lg p-2">
-                  <p className="text-[10px] text-zinc-500">Sync Status</p>
-                  <p className={`text-xs font-medium ${merkleStatus.current.inSync ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                    {merkleStatus.current.inSync ? '✓ In Sync' : '⚠ Out of Sync'}
-                  </p>
-                </div>
-                <div className="bg-zinc-800/40 rounded-lg p-2">
-                  <p className="text-[10px] text-zinc-500">Last Sync</p>
-                  <p className="text-xs text-zinc-300">
-                    {merkleStatus.current.lastSyncedAt
-                      ? new Date(merkleStatus.current.lastSyncedAt).toLocaleString()
-                      : 'Never'}
-                  </p>
-                </div>
+              <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-gradient-to-r from-purple-600 to-teal-500 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${allocationProgress}%` }}
+                  transition={{ duration: 1, ease: 'easeOut' }}
+                />
               </div>
-            )}
+              <p className="text-right text-xs text-zinc-500 mt-1">{allocationProgress.toFixed(1)}% allocated</p>
+            </div>
 
-            {/* ── Contract Details ── */}
             <div className="mt-4 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-2">
               <div className="bg-zinc-800/40 rounded-lg p-2">
                 <p className="text-[10px] text-zinc-500">Token</p>
@@ -1097,7 +985,6 @@ export default function AirdropPage() {
             <p>• Each address can only claim <span className="text-zinc-300">once</span>.</p>
             <p>• Claims are <span className="text-zinc-300">blocked when paused or finalized</span>.</p>
             <p>• Max window extension: <span className="text-zinc-300">{maxWindowExtConstant ? `${Number(maxWindowExtConstant as bigint) / 86400} days` : '...'}</span>.</p>
-            <p>• <span className="text-zinc-300">Merkle root is synced hourly</span> by the admin. Complete tasks and wait for the next sync.</p>
           </motion.div>
         </div>
       </motion.div>
