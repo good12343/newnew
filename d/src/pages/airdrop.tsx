@@ -372,7 +372,7 @@ export default function AirdropPage() {
     setEligibility(null);
     try {
       // Try backend first
-      const res = await fetch(`${API_BASE_URL}/airdrop/eligibility/${addr}`);
+      const res = await fetch(`${API_BASE_URL}/api/airdrop/eligibility/${addr}`);
       if (!res.ok) throw new Error('Backend eligibility check failed');
       const data: EligibilityData = await res.json();
       setEligibility(data);
