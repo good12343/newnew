@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { AIRDROP_ABI } from '@/config/abis';
 
-const API_BASE_URL = 'https://info-ef2s.onrender.com/api';
+const API_BASE_URL = 'https://info-goib.onrender.com/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -269,7 +269,7 @@ export default function AirdropPage() {
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/list`);
+      const res = await fetch(`${API_BASE_URL}/tasks/list`);
       if (!res.ok) throw new Error('Failed to fetch tasks');
       
       const allTasks: Task[] = await res.json();
@@ -287,7 +287,7 @@ export default function AirdropPage() {
   const fetchUserTasks = async (activeTasks: Task[]) => {
     if (!address || activeTasks.length === 0) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/status?wallet=${address}`);
+      const res = await fetch(`${API_BASE_URL}/tasks/status?wallet=${address}`);
       
       if (res.status === 404) {
         setUserTasks({});
@@ -326,7 +326,7 @@ export default function AirdropPage() {
     setCompletingTask(task.id);
     setTasksError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/complete`, {
+      const res = await fetch(`${API_BASE_URL}/tasks/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -372,7 +372,7 @@ export default function AirdropPage() {
     setEligibility(null);
     try {
       // Try backend first
-      const res = await fetch(`${API_BASE_URL}/api/airdrop/eligibility/${addr}`);
+      const res = await fetch(`${API_BASE_URL}/airdrop/eligibility/${addr}`);
       if (!res.ok) throw new Error('Backend eligibility check failed');
       const data: EligibilityData = await res.json();
       setEligibility(data);
