@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = 'https://info-hyqj.onrender.com';
+const API_BASE_URL = 'https://info-goib.onrender.com/api';
 
 interface Task {
   id: string;
