@@ -115,7 +115,11 @@ export default function AdminTasksPage() {
         body: JSON.stringify(formData)
       });
 
-      if (!res.ok) throw new Error('Failed to save');
+      const errText = await res.text();
+
+     if (!res.ok) {
+     throw new Error(errText || 'Failed to save');
+     }
       
       setShowForm(false);
       setEditingTask(null);
