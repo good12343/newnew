@@ -412,6 +412,11 @@ export default function AirdropPage() {
   try {
     setClaimStep('claiming');
 
+    console.log("CONNECTED:", address);
+console.log("AMOUNT:", eligibility.amount);
+console.log("PROOF:", eligibility.proof);
+console.log("FULL:", eligibility);
+
     const hash = await claimAirdrop({
       address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
       abi: AIRDROP_ABI,
