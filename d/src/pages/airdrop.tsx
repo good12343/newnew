@@ -386,37 +386,46 @@ export default function AirdropPage() {
   };
 
   const handleClaim = async () => {
-    if (!isConnected) {
-      openConnectModal?.();
-      return;
-    }
-    if (!eligibility?.eligible || !eligibility.proof || eligibility.proof.length === 0) {
-      setClaimError('No valid eligibility data found. Please try refreshing.');
-      return;
-    }
-    if (!eligibility.amount || eligibility.amount === '0') {
-      setClaimError('Invalid claim amount.');
-      return;
-    }
+  if (!isConnected) {
+    openConnectModal?.();
+    return;
+  }
 
-    setClaimError(null);
-    setSyncError(null);
-    
-    try {
-      setClaimStep('claiming');
-      const hash = await claimAirdrop({
-        address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
-        abi: AIRDROP_ABI,
-        functionName: 'claim',
-        args: [BigInt(eligibility.amount), eligibility.proof],
-      });
-      setClaimTxHash(hash);
-      setClaimStep('waiting');
-    } catch (err) {
-      setClaimError(parseContractError(err));
-      setClaimStep('idle');
-    }
-  };
+  if (!eligibility?.eligible) {
+    setClaimError('Address not eligible for airdrop.');
+    return;
+  }
+
+  if (!eligibility.amount || eligibility.amount === '0') {
+    setClaimError('Invalid claim amount.');
+    return;
+  }
+
+  if (!eligibility.proof) {
+    setClaimError('Merkle proof missing.');
+    return;
+  }
+
+  setClaimError(null);
+  setSyncError(null);
+
+  try {
+    setClaimStep('claiming');
+
+    const hash = await claimAirdrop({
+      address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
+      abi: AIRDROP_ABI,
+      functionName: 'claim',
+      args: [BigInt(eligibility.amount), eligibility.proof],
+    });
+
+    setClaimTxHash(hash);
+    setClaimStep('waiting');
+  } catch (err) {
+    setClaimError(parseContractError(err));
+    setClaimStep('idle');
+  }
+};
 
   const syncClaimWithBackend = async () => {
     if (!address || !claimTxHash || !eligibility) return;
