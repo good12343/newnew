@@ -1,45 +1,30 @@
-const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
+const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1'; // ← تأكد من الرابط
 
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  
-  const data = await res.json();
-  
-  if (!data.success) {
-    throw new Error(data.error?.message || 'Request failed');
+  try {
+    const res = await fetch(`${API_BASE_URL}${url}`, {
+      headers: { 
+        'Content-Type': 'application/json',
+        // أضف هذا إذا Render يحتاجه:
+        'Accept': 'application/json'
+      },
+      ...options,
+    });
+    
+    // ✅ تحقق من حالة الـ response أولاً
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    
+    const data = await res.json();
+    
+    if (!data.success) {
+      throw new Error(data.error?.message || 'Request failed');
+    }
+    
+    return data.data;
+  } catch (error) {
+    console.error('API Error:', error);
+    throw error; // أعد رميها ليتم عرضها في الواجهة
   }
-  
-  return data.data;
 }
-
-// Airdrop
-export const getEligibility = (walletAddress: string) => 
-  fetchApi(`/airdrop/eligibility?walletAddress=${walletAddress}`);
-
-export const getAirdropStats = () => 
-  fetchApi('/airdrop/stats');
-
-export const getProof = (walletAddress: string) => 
-  fetchApi(`/airdrop/proof?walletAddress=${walletAddress}`);
-
-export const submitClaim = (data: { walletAddress: string; txHash: string }) => 
-  fetchApi('/airdrop/claim', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-
-// Tasks
-export const getTasks = () => 
-  fetchApi('/tasks');
-
-export const getTaskHistory = (walletAddress: string) => 
-  fetchApi(`/tasks/me?walletAddress=${walletAddress}`);
-
-export const submitTask = (data: { walletAddress: string; taskId: string }) => 
-  fetchApi('/tasks/submit', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
