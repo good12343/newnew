@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://infov-eijd.onrender.com/api/v1';
+const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${url}`, {
