@@ -1,3 +1,4 @@
+/*
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { getEligibility, getAirdropStats, getProof } from '@/services/api';
@@ -47,3 +48,4 @@ export function useAirdropData() {
 
   return { eligibility, stats, proof, loading, error, refetch: fetchData };
 }
+*/
