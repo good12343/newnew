@@ -2,11 +2,8 @@ const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${url}`, {
-    ...options, // ← أولاً: انتشر options
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers, // ← ثم ادمج headers مع أي headers إضافية
-    },
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
   });
   
   const data = await res.json();
@@ -17,3 +14,32 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   
   return data.data;
 }
+
+// Airdrop
+export const getEligibility = (walletAddress: string) => 
+  fetchApi(`/airdrop/eligibility?walletAddress=${walletAddress}`);
+
+export const getAirdropStats = () => 
+  fetchApi('/airdrop/stats');
+
+export const getProof = (walletAddress: string) => 
+  fetchApi(`/airdrop/proof?walletAddress=${walletAddress}`);
+
+export const submitClaim = (data: { walletAddress: string; txHash: string }) => 
+  fetchApi('/airdrop/claim', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+// Tasks
+export const getTasks = () => 
+  fetchApi('/tasks');
+
+export const getTaskHistory = (walletAddress: string) => 
+  fetchApi(`/tasks/me?walletAddress=${walletAddress}`);
+
+export const submitTask = (data: { walletAddress: string; taskId: string }) => 
+  fetchApi('/tasks/submit', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
