@@ -4,9 +4,8 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
+const API_BASE_URL = 'https://infov-08oy.onrender.com';
 
-// ✅ نفس interface من backend
 interface ReviewItem {
   id: string;
   user: { wallet: string; riskScore: number };
@@ -36,13 +35,11 @@ export default function ReviewQueuePage() {
       return;
     }
     
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/check-role?wallet=${address}`);
-      const data = await res.json();
-      setIsAdmin(data.isGov || data.isAdmin);
-    } catch (err) {
-      setIsAdmin(false);
-    }
+    const ADMIN_WALLETS = [
+      "0x54FdC4531400dAA82C00B68c5c91dB327Abdf15c".toLowerCase(),
+    ];
+    
+    setIsAdmin(ADMIN_WALLETS.includes(address.toLowerCase()));
   };
 
   const fetchWithAuth = async (url: string, options: any = {}) => {
@@ -50,30 +47,26 @@ export default function ReviewQueuePage() {
     
     const message = `Admin action at ${Date.now()}`;
     const signature = await signMessageAsync({ message });
-    
-    const res = await fetch(url, {
+
+    return fetch(url, {
       ...options,
       headers: {
         ...options.headers,
         'Content-Type': 'application/json',
-        'x-wallet': address,
+        'x-wallet-address': address,  // ✅ was: x-wallet
         'x-signature': signature,
-        'x-message': message
+        'x-message': message,
       }
     });
-
-    if (res.status === 403) throw new Error('Forbidden - Governance role required');
-    return res;
   };
 
   const fetchQueue = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review-queue`);
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/review-queue`);  // ✅ was: /api/admin/review-queue
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
-      // ✅ Backend يرجع { success: true, data: [...] }
       setQueue(data.data || []);
     } catch (err: any) {
       setError(err.message);
@@ -82,10 +75,9 @@ export default function ReviewQueuePage() {
     }
   };
 
-  // ✅ عدلت الـ endpoints
   const handleApprove = async (id: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review/${id}/approve`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/review/${id}/approve`, {  // ✅ was: /api/admin/review-queue
         method: 'POST'
       });
       if (!res.ok) throw new Error('Failed to approve');
@@ -97,7 +89,7 @@ export default function ReviewQueuePage() {
 
   const handleReject = async (id: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review/${id}/reject`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/review/${id}/reject`, {  // ✅ was: /api/admin/review-queue
         method: 'POST'
       });
       if (!res.ok) throw new Error('Failed to reject');
