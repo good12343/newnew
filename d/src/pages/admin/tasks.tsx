@@ -27,7 +27,6 @@ export default function AdminTasksPage() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const [formData, setFormData] = useState({
-    id: '',
     title: '',
     description: '',
     points: 0,
@@ -120,7 +119,6 @@ export default function AdminTasksPage() {
 
   const resetForm = () => {
     setFormData({
-      id: '',
       title: '',
       description: '',
       points: 0,
@@ -133,7 +131,6 @@ export default function AdminTasksPage() {
   const startEdit = (task: Task) => {
     setEditingTask(task);
     setFormData({
-      id: task.id,
       title: task.title,
       description: task.description || '',
       points: task.points,
