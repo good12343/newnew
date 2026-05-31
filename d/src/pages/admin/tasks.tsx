@@ -65,21 +65,32 @@ export default function AdminTasksPage() {
   };
 
   const fetchWithAuth = async (url: string, options: any = {}) => {
-    if (!address) throw new Error('Wallet not connected');
-    
-    const message = `Admin action at ${Date.now()}`;
-    const signature = await signMessageAsync({ message });
-    
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        ...options.headers,
-        'Content-Type': 'application/json',
-        'x-wallet': address,
-        'x-signature': signature,
-        'x-message': message
-      }
-    });
+  if (!address) throw new Error('Wallet not connected');
+  
+  const timestamp = Date.now();
+  
+  // ✅ توقيع 1 — نفس المنطق الأصلي
+  const message1 = `Admin action at ${timestamp}`;
+  const signature1 = await signMessageAsync({ message: message1 });
+  
+  // ✅ توقيع 2 — نفس المنطق بس رسالة مختلفة
+  const message2 = `Confirm admin ${address} at ${timestamp}`;
+  const signature2 = await signMessageAsync({ message: message2 });
+
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Content-Type': 'application/json',
+      'x-wallet': address,
+      'x-signature': signature1,
+      'x-message': message1,
+      'x-signature-2': signature2,
+      'x-message-2': message2,
+    }
+  });
+};
+
 
     if (res.status === 403) {
       throw new Error('Forbidden - Governance role required');
