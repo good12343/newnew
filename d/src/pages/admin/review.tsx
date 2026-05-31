@@ -1,9 +1,12 @@
+// page/admin/reward.tsx
+
 import { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
+// ✅ نفس interface من backend
 interface ReviewItem {
   id: string;
   user: { wallet: string; riskScore: number };
@@ -16,16 +19,61 @@ interface ReviewItem {
 
 export default function ReviewQueuePage() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   
-  const [queue, setQueue] = useState<<ReviewItem[]>([]);
+  const [queue, setQueue] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    checkAdminRole();
+  }, [address]);
+
+  const checkAdminRole = async () => {
+    if (!address) {
+      setIsAdmin(false);
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/check-role?wallet=${address}`);
+      const data = await res.json();
+      setIsAdmin(data.isGov || data.isAdmin);
+    } catch (err) {
+      setIsAdmin(false);
+    }
+  };
+
+  const fetchWithAuth = async (url: string, options: any = {}) => {
+    if (!address) throw new Error('Wallet not connected');
+    
+    const message = `Admin action at ${Date.now()}`;
+    const signature = await signMessageAsync({ message });
+    
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        'x-wallet': address,
+        'x-signature': signature,
+        'x-message': message
+      }
+    });
+
+    if (res.status === 403) throw new Error('Forbidden - Governance role required');
+    return res;
+  };
 
   const fetchQueue = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/review-queue`);
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review-queue`);
+      if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
+      // ✅ Backend يرجع { success: true, data: [...] }
       setQueue(data.data || []);
     } catch (err: any) {
       setError(err.message);
@@ -34,10 +82,11 @@ export default function ReviewQueuePage() {
     }
   };
 
+  // ✅ عدلت الـ endpoints
   const handleApprove = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/review/${id}/approve`, {
-        method: 'POST',
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review/${id}/approve`, {
+        method: 'POST'
       });
       if (!res.ok) throw new Error('Failed to approve');
       fetchQueue();
@@ -48,8 +97,8 @@ export default function ReviewQueuePage() {
 
   const handleReject = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/review/${id}/reject`, {
-        method: 'POST',
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review/${id}/reject`, {
+        method: 'POST'
       });
       if (!res.ok) throw new Error('Failed to reject');
       fetchQueue();
@@ -59,13 +108,24 @@ export default function ReviewQueuePage() {
   };
 
   useEffect(() => {
-    if (isConnected) fetchQueue();
-  }, [isConnected]);
+    if (isAdmin) fetchQueue();
+  }, [isAdmin]);
 
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <p className="text-zinc-400">Connect wallet to access admin panel</p>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-400 text-xl mb-2">⛔ Access Denied</p>
+          <p className="text-zinc-400">Governance role required</p>
+        </div>
       </div>
     );
   }
@@ -98,6 +158,7 @@ export default function ReviewQueuePage() {
                         item.task.platform === 'X' ? 'bg-zinc-800 text-zinc-300 border-zinc-700' :
                         item.task.platform === 'TELEGRAM' ? 'bg-sky-900/30 text-sky-400 border-sky-700/50' :
                         item.task.platform === 'YOUTUBE' ? 'bg-red-900/30 text-red-400 border-red-700/50' :
+                        item.task.platform === 'DISCORD' ? 'bg-indigo-900/30 text-indigo-400 border-indigo-700/50' :
                         'bg-amber-900/30 text-amber-400 border-amber-700/50'
                       }`}>
                         {item.task.platform}
