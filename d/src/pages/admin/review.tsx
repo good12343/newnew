@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useSignMessage } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = 'https://info-goib.onrender.com';
+const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
 interface ReviewItem {
   id: string;
@@ -16,59 +16,17 @@ interface ReviewItem {
 
 export default function ReviewQueuePage() {
   const { address, isConnected } = useAccount();
-  const { signMessageAsync } = useSignMessage();
   
-  const [queue, setQueue] = useState<ReviewItem[]>([]);
+  const [queue, setQueue] = useState<<ReviewItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    checkAdminRole();
-  }, [address]);
-
-  const checkAdminRole = async () => {
-    if (!address) {
-      setIsAdmin(false);
-      return;
-    }
-    
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/check-role?wallet=${address}`);
-      const data = await res.json();
-      setIsAdmin(data.isGov || data.isAdmin);
-    } catch (err) {
-      setIsAdmin(false);
-    }
-  };
-
-  const fetchWithAuth = async (url: string, options: any = {}) => {
-    if (!address) throw new Error('Wallet not connected');
-    
-    const message = `Admin action at ${Date.now()}`;
-    const signature = await signMessageAsync({ message });
-    
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        ...options.headers,
-        'Content-Type': 'application/json',
-        'x-wallet': address,
-        'x-signature': signature,
-        'x-message': message
-      }
-    });
-
-    if (res.status === 403) throw new Error('Forbidden - Governance role required');
-    return res;
-  };
 
   const fetchQueue = async () => {
     setLoading(true);
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review-queue`);
+      const res = await fetch(`${API_BASE_URL}/admin/review-queue`);
       const data = await res.json();
-      setQueue(data);
+      setQueue(data.data || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -78,8 +36,8 @@ export default function ReviewQueuePage() {
 
   const handleApprove = async (id: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review-queue/${id}/approve`, {
-        method: 'POST'
+      const res = await fetch(`${API_BASE_URL}/admin/review/${id}/approve`, {
+        method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to approve');
       fetchQueue();
@@ -90,8 +48,8 @@ export default function ReviewQueuePage() {
 
   const handleReject = async (id: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/review-queue/${id}/reject`, {
-        method: 'POST'
+      const res = await fetch(`${API_BASE_URL}/admin/review/${id}/reject`, {
+        method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to reject');
       fetchQueue();
@@ -101,24 +59,13 @@ export default function ReviewQueuePage() {
   };
 
   useEffect(() => {
-    if (isAdmin) fetchQueue();
-  }, [isAdmin]);
+    if (isConnected) fetchQueue();
+  }, [isConnected]);
 
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <p className="text-zinc-400">Connect wallet to access admin panel</p>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-400 text-xl mb-2">⛔ Access Denied</p>
-          <p className="text-zinc-400">Governance role required</p>
-        </div>
       </div>
     );
   }
