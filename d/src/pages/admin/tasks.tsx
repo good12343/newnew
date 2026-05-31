@@ -1,56 +1,102 @@
+// page/admin/tasks.tsx
+
 import { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
+// ✅ متوافق مع schema الجديد
 interface Task {
   id: string;
   title: string;
   description: string | null;
   points: number;
   platform: string;
-  category: string;
+  type: string;        // ← was: category
   url: string | null;
   isActive: boolean;
+  maxSubmissions: number;  // ← جديد
   createdAt: string;
   updatedAt: string;
 }
 
 export default function AdminTasksPage() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>( | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
+  // ✅ شيل id من formData
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    points: 0,
-    platform: 'X',
-    category: 'SOCIAL',
-    url: ''
+    points: 100,
+    platform: 'X' as const,
+    type: 'SOCIAL' as const,      // ← was: category
+    url: '',
+    isActive: true,
+    maxSubmissions: 1,            // ← جديد
   });
 
-  // Fetch tasks
+  useEffect(() => {
+    checkAdminRole();
+  }, [address]);
+
+  const checkAdminRole = async () => {
+    if (!address) {
+      setIsAdmin(false);
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/check-role?wallet=${address}`);
+      const data = await res.json();
+      setIsAdmin(data.isGov || data.isAdmin);
+    } catch (err) {
+      console.error('Role check failed:', err);
+      setIsAdmin(false);
+    }
+  };
+
+  const fetchWithAuth = async (url: string, options: any = {}) => {
+    if (!address) throw new Error('Wallet not connected');
+    
+    const message = `Admin action at ${Date.now()}`;
+    const signature = await signMessageAsync({ message });
+    
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        'x-wallet': address,
+        'x-signature': signature,
+        'x-message': message
+      }
+    });
+
+    if (res.status === 403) {
+      throw new Error('Forbidden - Governance role required');
+    }
+    
+    return res;
+  };
+
   const fetchTasks = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/tasks`, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include', // If using cookies/session
-      });
-      
-      if (!res.ok) throw new Error('Failed to fetch tasks');
-      
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/tasks`);
+      if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
-      setTasks(data.data || []);
+      // ✅ Backend يرجع { success: true, data: [...] }
+      setTasks(data.data || data || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -64,20 +110,25 @@ export default function AdminTasksPage() {
     
     try {
       const url = editingTask 
-        ? `${API_BASE_URL}/admin/tasks/${editingTask.id}`
-        : `${API_BASE_URL}/admin/tasks`;
+        ? `${API_BASE_URL}/api/admin/tasks/${editingTask.id}`
+        : `${API_BASE_URL}/api/admin/tasks`;
       
       const method = editingTask ? 'PUT' : 'POST';
       
-      const res = await fetch(url, {
+      // ✅ استبعد id من body (Create)
+      const body = editingTask 
+        ? { ...formData } 
+        : { ...formData };
+      // ملاحظة: id ما موجود في formData أصلاً
+
+      const res = await fetchWithAuth(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(body)
       });
 
+      const errText = await res.text();
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error?.message || 'Failed to save');
+        throw new Error(errText || 'Failed to save');
       }
       
       setShowForm(false);
@@ -95,8 +146,8 @@ export default function AdminTasksPage() {
     if (!confirm('Delete this task?')) return;
     
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/tasks/${id}`, {
-        method: 'DELETE',
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/tasks/${id}`, {
+        method: 'DELETE'
       });
       if (!res.ok) throw new Error('Failed to delete');
       fetchTasks();
@@ -107,8 +158,8 @@ export default function AdminTasksPage() {
 
   const handleToggle = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/tasks/${id}/toggle`, {
-        method: 'PATCH',
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/admin/tasks/${id}/toggle`, {
+        method: 'PATCH'
       });
       if (!res.ok) throw new Error('Failed to toggle');
       fetchTasks();
@@ -121,10 +172,12 @@ export default function AdminTasksPage() {
     setFormData({
       title: '',
       description: '',
-      points: 0,
+      points: 100,
       platform: 'X',
-      category: 'SOCIAL',
-      url: ''
+      type: 'SOCIAL',
+      url: '',
+      isActive: true,
+      maxSubmissions: 1,
     });
   };
 
@@ -134,21 +187,30 @@ export default function AdminTasksPage() {
       title: task.title,
       description: task.description || '',
       points: task.points,
-      platform: task.platform,
-      category: task.category,
-      url: task.url || ''
+      platform: task.platform as any,
+      type: task.type as any,           // ← was: category
+      url: task.url || '',
+      isActive: task.isActive,
+      maxSubmissions: task.maxSubmissions || 1,
     });
     setShowForm(true);
   };
-
-  useEffect(() => {
-    if (isConnected) fetchTasks();
-  }, [isConnected]);
 
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <p className="text-zinc-400">Connect wallet to access admin panel</p>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-400 text-xl mb-2">⛔ Access Denied</p>
+          <p className="text-zinc-400">Governance role required</p>
+        </div>
       </div>
     );
   }
@@ -183,18 +245,18 @@ export default function AdminTasksPage() {
             </h2>
             
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">ID (unique)</label>
-                <input
-                  type="text"
-                  value={formData.id}
-                  onChange={e => setFormData({...formData, id: e.target.value})}
-                  disabled={!!editingTask}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white disabled:opacity-50"
-                  placeholder="task_x_follow"
-                  required
-                />
-              </div>
+              {/* ✅ شيل ID field من Create */}
+              {editingTask && (
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">ID</label>
+                  <input
+                    type="text"
+                    value={editingTask.id}
+                    disabled
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white opacity-50"
+                  />
+                </div>
+              )}
               
               <div>
                 <label className="block text-sm text-zinc-400 mb-1">Title</label>
@@ -212,8 +274,9 @@ export default function AdminTasksPage() {
                 <label className="block text-sm text-zinc-400 mb-1">Points</label>
                 <input
                   type="number"
+                  min="1"
                   value={formData.points}
-                  onChange={e => setFormData({...formData, points: parseInt(e.target.value)})}
+                  onChange={e => setFormData({...formData, points: parseInt(e.target.value) || 0})}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white"
                   required
                 />
@@ -223,27 +286,40 @@ export default function AdminTasksPage() {
                 <label className="block text-sm text-zinc-400 mb-1">Platform</label>
                 <select
                   value={formData.platform}
-                  onChange={e => setFormData({...formData, platform: e.target.value})}
+                  onChange={e => setFormData({...formData, platform: e.target.value as any})}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white"
                 >
                   <option value="X">X (Twitter)</option>
                   <option value="TELEGRAM">Telegram</option>
                   <option value="YOUTUBE">YouTube</option>
+                  <option value="DISCORD">Discord</option>
                   <option value="ARTICLE">Article</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">Category</label>
+                <label className="block text-sm text-zinc-400 mb-1">Type</label>
                 <select
-                  value={formData.category}
-                  onChange={e => setFormData({...formData, category: e.target.value})}
+                  value={formData.type}
+                  onChange={e => setFormData({...formData, type: e.target.value as any})}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white"
                 >
                   <option value="SOCIAL">Social</option>
                   <option value="VIDEO">Video</option>
                   <option value="ARTICLE">Article</option>
+                  <option value="REFERRAL">Referral</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-zinc-400 mb-1">Max Submissions</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={formData.maxSubmissions}
+                  onChange={e => setFormData({...formData, maxSubmissions: parseInt(e.target.value) || 1})}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white"
+                />
               </div>
 
               <div>
@@ -255,6 +331,18 @@ export default function AdminTasksPage() {
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white"
                   placeholder="https://x.com/..."
                 />
+              </div>
+
+              <div className="flex items-center">
+                <label className="flex items-center gap-2 text-sm text-zinc-400">
+                  <input
+                    type="checkbox"
+                    checked={formData.isActive}
+                    onChange={e => setFormData({...formData, isActive: e.target.checked})}
+                    className="w-4 h-4 rounded bg-zinc-800 border-zinc-700"
+                  />
+                  Active
+                </label>
               </div>
             </div>
 
@@ -286,7 +374,9 @@ export default function AdminTasksPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">ID</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Title</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Platform</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Points</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Max Sub</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400">Actions</th>
               </tr>
@@ -301,7 +391,9 @@ export default function AdminTasksPage() {
                       {task.platform}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-xs text-zinc-400">{task.type}</td>
                   <td className="px-4 py-3 text-sm text-teal-400">+{task.points}</td>
+                  <td className="px-4 py-3 text-sm text-zinc-400">{task.maxSubmissions}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 text-xs rounded ${
                       task.isActive 
