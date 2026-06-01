@@ -269,7 +269,7 @@ export default function AirdropPage() {
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/tasks`);
+      const res = await fetch(`${API_BASE_URL}/tasks?walletAddress=${address}`);
       
       if (!res.ok) throw new Error('Failed to fetch tasks');
       
