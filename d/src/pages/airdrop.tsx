@@ -142,7 +142,7 @@ export default function AirdropPage() {
   const [completingTask, setCompletingTask] = useState<string | null>(null);
   const [startedTasks, setStartedTasks] = useState<Set<string>>(new Set());
 
-  // ── Contract Reads (PRIMARY - for airdrop state) ──────────────────────────
+  // ── Contract Reads ──────────────────────────────────────────────────────────
   const { data: govLockConstant } = useReadContract({
     address: CURRENT_CONTRACTS.AIRDROP as `0x${string}`,
     abi: AIRDROP_ABI,
@@ -270,10 +270,11 @@ export default function AirdropPage() {
     setTasksError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/tasks`);
+      
       if (!res.ok) throw new Error('Failed to fetch tasks');
       
       const data = await res.json();
-      const allTasks: Task[] = data.data || []; // ✅ Handle API response format
+      const allTasks: Task[] = data.data || [];
       const activeTasks = allTasks.filter(t => t.isActive);
       setTasks(activeTasks);
 
@@ -373,7 +374,6 @@ export default function AirdropPage() {
     setCheckError(null);
     setEligibility(null);
     try {
-      // ✅ NEW: Fetch from new API
       const res = await fetch(`${API_BASE_URL}/airdrop/eligibility?walletAddress=${addr}`);
       if (!res.ok) throw new Error('Backend eligibility check failed');
       

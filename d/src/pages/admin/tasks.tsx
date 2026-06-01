@@ -1,10 +1,8 @@
-// page/admin/tasks.tsx
-
 import { useState, useEffect } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = 'https://infov-08oy.onrender.com';
+const API_BASE_URL = 'https://infov-08oy.onrender.com/api/v1';
 
 interface Task {
   id: string;
@@ -30,6 +28,7 @@ export default function AdminTasksPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingRole, setCheckingRole] = useState(true);
 
   const [formData, setFormData] = useState({
     title: '',
@@ -46,19 +45,45 @@ export default function AdminTasksPage() {
     checkAdminRole();
   }, [address]);
 
+  useEffect(() => {
+    if (isAdmin) {
+      fetchTasks();
+    }
+  }, [isAdmin]);
+
   const checkAdminRole = async () => {
     if (!address) {
       setIsAdmin(false);
+      setCheckingRole(false);
       return;
     }
     
-    // ✅ مؤقت — لأن /api/v1/auth/check-role ما موجود
-    // TODO: أضف endpoint في Backend أو استخدم contract call
-    const ADMIN_WALLETS = [
-      "0x54FdC4531400dAA82C00B68c5c91dB327Abdf15c".toLowerCase(),
-    ];
-    
-    setIsAdmin(ADMIN_WALLETS.includes(address.toLowerCase()));
+    setCheckingRole(true);
+    try {
+      const message = `Admin action at ${Date.now()}`;
+      const signature = await signMessageAsync({ message });
+
+      const res = await fetch(`${API_BASE_URL}/auth/check-role?address=${address}`, {
+        headers: {
+          'x-wallet-address': address,
+          'x-signature': signature,
+          'x-message': message,
+        },
+      });
+
+      if (!res.ok) {
+        setIsAdmin(false);
+        return;
+      }
+
+      const data = await res.json();
+      setIsAdmin(data.data?.isAuthorized || false);
+    } catch (err) {
+      console.error('Role check failed:', err);
+      setIsAdmin(false);
+    } finally {
+      setCheckingRole(false);
+    }
   };
 
   const fetchWithAuth = async (url: string, options: any = {}) => {
@@ -72,7 +97,7 @@ export default function AdminTasksPage() {
       headers: {
         ...options.headers,
         'Content-Type': 'application/json',
-        'x-wallet-address': address,  // ✅ was: x-wallet
+        'x-wallet-address': address,
         'x-signature': signature,
         'x-message': message,
       }
@@ -83,13 +108,15 @@ export default function AdminTasksPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/tasks`);  // ✅ was: /api/admin/tasks
+      const res = await fetchWithAuth(`${API_BASE_URL}/admin/tasks`);
+      
       if (!res.ok) {
         const errData = await res.json();
         throw new Error(errData.error?.message || 'Failed to fetch');
       }
+      
       const data = await res.json();
-      setTasks(data.data || []);
+      setTasks(Array.isArray(data.data) ? data.data : []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -103,14 +130,19 @@ export default function AdminTasksPage() {
     
     try {
       const url = editingTask 
-        ? `${API_BASE_URL}/api/v1/admin/tasks/${editingTask.id}`  // ✅ was: /api/admin/tasks
-        : `${API_BASE_URL}/api/v1/admin/tasks`;
+        ? `${API_BASE_URL}/admin/tasks/${editingTask.id}`
+        : `${API_BASE_URL}/admin/tasks`;
       
       const method = editingTask ? 'PUT' : 'POST';
       
+      const payload = {
+        ...formData,
+        url: formData.url || null,
+      };
+      
       const res = await fetchWithAuth(url, {
         method,
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
@@ -133,7 +165,7 @@ export default function AdminTasksPage() {
     if (!confirm('Delete this task?')) return;
     
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/tasks/${id}`, {  // ✅
+      const res = await fetchWithAuth(`${API_BASE_URL}/admin/tasks/${id}`, {
         method: 'DELETE'
       });
       if (!res.ok) throw new Error('Failed to delete');
@@ -145,7 +177,7 @@ export default function AdminTasksPage() {
 
   const handleToggle = async (id: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/api/v1/admin/tasks/${id}/toggle`, {  // ✅
+      const res = await fetchWithAuth(`${API_BASE_URL}/admin/tasks/${id}/toggle`, {
         method: 'PATCH'
       });
       if (!res.ok) throw new Error('Failed to toggle');
@@ -191,12 +223,26 @@ export default function AdminTasksPage() {
     );
   }
 
+  if (checkingRole) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="flex items-center gap-2 text-zinc-400">
+          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Checking permissions...
+        </div>
+      </div>
+    );
+  }
+
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-400 text-xl mb-2">⛔ Access Denied</p>
-          <p className="text-zinc-400">Governance role required</p>
+          <p className="text-zinc-400">Admin or Governance role required</p>
         </div>
       </div>
     );
