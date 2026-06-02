@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSignMessage } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { formatUnits, type Hash, zeroHash } from 'viem';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -120,6 +120,7 @@ function PlatformColor(platform: Task['platform']) {
 export default function AirdropPage() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const { signMessageAsync } = useSignMessage();
 
   // ── Eligibility Data ────────────────────────────────────────────────────────
   const [eligibility, setEligibility] = useState<EligibilityData | null>(null);
@@ -319,55 +320,69 @@ export default function AirdropPage() {
   };
 
   const handleCompleteTask = async (task: Task) => {
-    if (!address) return;
+  if (!address) return;
+  
+  if (!startedTasks.has(task.id)) {
+    setTasksError('⚠️ Please click "Start Task" first to open the link');
+    return;
+  }
+  
+  setCompletingTask(task.id);
+  setTasksError(null);
+  
+  try {
+    // ✅ أنشئ رسالة للتوقيع
+    const message = `Complete task ${task.id} for wallet ${address} at ${Date.now()}`;
     
-    if (!startedTasks.has(task.id)) {
-      setTasksError('⚠️ Please click "Start Task" first to open the link');
-      return;
+    // ✅ وقّع الرسالة
+    const signature = await signMessageAsync({ message });
+    
+    // ✅ أرسل مع التوقيع
+    const res = await fetch(`${API_BASE_URL}/tasks/submit`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-wallet-address': address,
+        'x-signature': signature,
+        'x-message': message,
+      },
+      body: JSON.stringify({
+        walletAddress: address,
+        taskId: task.id,
+        proof: { signature, message },
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error?.message || 'Failed to complete task');
     }
+
+    const data = await res.json();
     
-    setCompletingTask(task.id);
-    setTasksError(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/tasks/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletAddress: address,
-          taskId: task.id,
-        }),
-      });
+    setUserTasks(prev => ({
+      ...prev,
+      [task.id]: {
+        id: data.data?.id || task.id,
+        userId: address,
+        taskId: task.id,
+        status: data.data?.status || 'PENDING',
+        rewardGiven: data.data?.rewardGiven || false,
+        completedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    }));
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error?.message || 'Failed to complete task');
-      }
+    await fetchTasks();
 
-      const data = await res.json();
+  } catch (err) {
+    setTasksError((err as Error).message || 'Failed to complete task');
+  } finally {
+    setCompletingTask(null);
+  }
+};
       
-      setUserTasks(prev => ({
-        ...prev,
-        [task.id]: {
-          id: data.data?.id || task.id,
-          userId: address,
-          taskId: task.id,
-          status: data.data?.status || 'PENDING',
-          rewardGiven: data.data?.rewardGiven || false,
-          completedAt: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      }));
-
-      await fetchTasks();
-
-    } catch (err) {
-      setTasksError((err as Error).message || 'Failed to complete task');
-    } finally {
-      setCompletingTask(null);
-    }
-  };
-
   // ── Eligibility Handlers ───────────────────────────────────────────────────
   const checkEligibility = async (addr: string) => {
     setCheckLoading(true);
