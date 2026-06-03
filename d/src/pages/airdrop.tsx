@@ -331,6 +331,7 @@ export default function AirdropPage() {
   setTasksError(null);
   
   try {
+<<<<<<< HEAD
     // ✅ أنشئ رسالة للتوقيع
     const message = `Complete task ${task.id} for wallet ${address} at ${Date.now()}`;
     
@@ -338,18 +339,27 @@ export default function AirdropPage() {
     const signature = await signMessageAsync({ message });
     
     // ✅ أرسل مع التوقيع
+=======
+>>>>>>> 6bf13e3 (import)
     const res = await fetch(`${API_BASE_URL}/tasks/submit`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
+<<<<<<< HEAD
         'x-wallet-address': address,
         'x-signature': signature,
         'x-message': message,
+=======
+>>>>>>> 6bf13e3 (import)
       },
       body: JSON.stringify({
         walletAddress: address,
         taskId: task.id,
+<<<<<<< HEAD
         proof: { signature, message },
+=======
+        proof: {},
+>>>>>>> 6bf13e3 (import)
       }),
     });
 
@@ -366,7 +376,11 @@ export default function AirdropPage() {
         id: data.data?.id || task.id,
         userId: address,
         taskId: task.id,
+<<<<<<< HEAD
         status: data.data?.status || 'PENDING',
+=======
+        status: data.data?.status || 'REVIEW',
+>>>>>>> 6bf13e3 (import)
         rewardGiven: data.data?.rewardGiven || false,
         completedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -382,7 +396,12 @@ export default function AirdropPage() {
     setCompletingTask(null);
   }
 };
+<<<<<<< HEAD
       
+=======
+
+
+>>>>>>> 6bf13e3 (import)
   // ── Eligibility Handlers ───────────────────────────────────────────────────
   const checkEligibility = async (addr: string) => {
     setCheckLoading(true);
