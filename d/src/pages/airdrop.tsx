@@ -355,7 +355,7 @@ export default function AirdropPage() {
         id: data.data?.id || task.id,
         userId: address,
         taskId: task.id,
-        status: data.data?.status || 'REVIEW',
+        status: data.data?.status || 'PENDING',
         rewardGiven: data.data?.rewardGiven || false,
         completedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
