@@ -355,7 +355,7 @@ export default function AirdropPage() {
         id: data.data?.id || task.id,
         userId: address,
         taskId: task.id,
-        status: data.data?.status || 'PENDING',
+        status: data.data?.status || 'REVIEW',
         rewardGiven: data.data?.rewardGiven || false,
         completedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -363,12 +363,8 @@ export default function AirdropPage() {
       },
     }));
 
-    await fetchUserTasks(tasks);
+    await fetchTasks();
     
-    // ✅ بعد ثانيتين، اعرض الحالة المحدّثة من الـ Backend
-    setTimeout(async () => {
-      await fetchUserTasks(tasks);
-    }, 2000);
 
   } catch (err) {
     setTasksError((err as Error).message || 'Failed to complete task');
