@@ -363,7 +363,12 @@ export default function AirdropPage() {
       },
     }));
 
-    await fetchTasks();
+    await fetchUserTasks(tasks);
+    
+    // ✅ بعد ثانيتين، اعرض الحالة المحدّثة من الـ Backend
+    setTimeout(async () => {
+      await fetchUserTasks(tasks);
+    }, 2000);
 
   } catch (err) {
     setTasksError((err as Error).message || 'Failed to complete task');
