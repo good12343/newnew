@@ -220,8 +220,8 @@ const Calculator: FC<CalculatorProps> = ({
 
     if (!amount || parseFloat(amount) === 0) return;
 
-    if (minPurchase && currencyAmount < (minPurchase as bigint)) {
-      setError(`Minimum purchase is ${formatUnits(minPurchase as bigint, currencyDecimals)} ${selectedCurrencyInfo?.symbol}`);
+    if (minPurchase && tokenAmount < (minPurchase as bigint)) {
+      setError(`Minimum purchase is ${formatUnits(minPurchase as bigint, 18)} FOR`);
       return;
     }
 
